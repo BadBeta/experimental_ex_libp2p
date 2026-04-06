@@ -1,0 +1,52 @@
+[package]
+name = "ex_libp2p_nif"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "ex_libp2p_nif"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.36.2"
+libp2p = { version = "0.54", features = [
+    "tokio",
+    # Transports
+    "tcp",
+    "quic",
+    "dns",
+    "websocket",
+    # Security
+    "noise",
+    "tls",
+    "pnet",
+    # Multiplexing
+    "yamux",
+    # Protocols
+    "gossipsub",
+    "kad",
+    "mdns",
+    "identify",
+    "ping",
+    "request-response",
+    "cbor",
+    "json",
+    "rendezvous",
+    # NAT traversal
+    "relay",
+    "dcutr",
+    "autonat",
+    "upnp",
+    # Resource management
+    "macros",
+    "metrics",
+    "memory-connection-limits",
+    # Key types
+    "ecdsa",
+    "secp256k1",
+    "rsa",
+] }
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+tracing = "0.1"
+parking_lot = "0.12"
