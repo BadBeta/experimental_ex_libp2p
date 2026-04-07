@@ -48,17 +48,13 @@ flowchart TB
         Behaviours --> Transport
     end
 
-    Node -->|"GenServer.call → NIF function"| Nif
-    Nif -->|"channel.send(Command)"| CmdChan
-    SwarmLoop -->|"OwnedEnv::send_and_clear"| Node
+    Node -->|"GenServer.call to NIF"| Nif
+    Nif -->|"channel.send Command"| CmdChan
+    SwarmLoop -->|"OwnedEnv send_and_clear"| Node
 
-    classDef elixir fill:#4e2a8e,stroke:#6b3fa0,color:#fff
-    classDef nif fill:#2c3e50,stroke:#34495e,color:#fff
-    classDef rust fill:#b7410e,stroke:#d4541e,color:#fff
-
-    class App,Facade,Ctx,Node,Handlers,OTP elixir
-    class Behaviour,Mock,Nif nif
-    class CmdChan,SwarmLoop,Behaviours,Transport rust
+    style Elixir fill:#e8d5f5,stroke:#6b3fa0
+    style NIF fill:#d6dce4,stroke:#34495e
+    style Rust fill:#f5d5c8,stroke:#d4541e
 ```
 
 ### Why Three Layers
@@ -84,14 +80,14 @@ sequenceDiagram
     participant Chan as mpsc Channel
     participant Loop as Swarm Loop
 
-    App->>GS: GenServer.call(node, {:publish, topic, data})
-    GS->>NIF: native.publish(handle, topic, data)
-    Note over NIF: Runs on normal BEAM scheduler<br/>(< 1ms, no blocking)
-    NIF->>Chan: cmd_tx.send(Command::Publish{...})
-    NIF-->>GS: :ok
-    GS-->>App: :ok
-    Chan->>Loop: tokio::select! receives command
-    Loop->>Loop: gossipsub.publish(topic, data)
+    App->>GS: GenServer.call publish
+    GS->>NIF: native.publish
+    Note over NIF: Normal scheduler, under 1ms
+    NIF->>Chan: cmd_tx.send Publish command
+    NIF-->>GS: ok
+    GS-->>App: ok
+    Chan->>Loop: tokio select receives command
+    Loop->>Loop: gossipsub.publish
 ```
 
 Fire-and-forget commands (dial, publish, subscribe) return `:ok` immediately.
@@ -104,19 +100,19 @@ sequenceDiagram
     participant App as Application
     participant GS as GenServer
     participant NIF as NIF Function
-    participant Chan as mpsc + oneshot
+    participant Chan as mpsc and oneshot
     participant Loop as Swarm Loop
 
-    App->>GS: GenServer.call(node, :connected_peers)
-    GS->>NIF: native.connected_peers(handle)
-    Note over NIF: Runs on DirtyCpu scheduler<br/>(blocks until reply)
-    NIF->>Chan: cmd_tx.send(ConnectedPeers{reply: oneshot})
-    Chan->>Loop: tokio::select! receives command
-    Loop->>Loop: swarm.connected_peers().collect()
-    Loop->>Chan: oneshot.send(peers)
-    Chan-->>NIF: rx.blocking_recv() → peers
-    NIF-->>GS: Vec<String>
-    GS-->>App: {:ok, [%PeerId{}, ...]}
+    App->>GS: GenServer.call connected_peers
+    GS->>NIF: native.connected_peers
+    Note over NIF: DirtyCpu scheduler, blocks until reply
+    NIF->>Chan: send ConnectedPeers with oneshot
+    Chan->>Loop: tokio select receives command
+    Loop->>Loop: swarm.connected_peers collect
+    Loop->>Chan: oneshot.send peers
+    Chan-->>NIF: blocking_recv returns peers
+    NIF-->>GS: list of peer ID strings
+    GS-->>App: ok with PeerId structs
 ```
 
 Query commands carry a `oneshot::Sender` for the reply. The NIF blocks on `blocking_recv()`
@@ -132,14 +128,14 @@ sequenceDiagram
     participant GS as Node GenServer
     participant Handler as Event Handler
 
-    Net->>Loop: SwarmEvent::Behaviour(...)
-    Loop->>Env: OwnedEnv::new()
+    Net->>Loop: SwarmEvent Behaviour
+    Loop->>Env: OwnedEnv new
     Env->>Env: Encode event as Elixir term
-    Env->>GS: send_and_clear(&pid, term)
-    Note over Env: OwnedEnv allocates ~4KB<br/>Released after send_and_clear
-    GS->>GS: handle_info({:libp2p_event, raw})
-    GS->>GS: Event.from_raw(raw) → struct
-    GS->>Handler: send(pid, {:libp2p, type, struct})
+    Env->>GS: send_and_clear to pid
+    Note over Env: Allocates 4KB, released after send
+    GS->>GS: handle_info libp2p_event
+    GS->>GS: Event.from_raw to struct
+    GS->>Handler: send pid libp2p event
 ```
 
 Events flow from the tokio swarm loop to Elixir via `OwnedEnv::send_and_clear`.
@@ -151,14 +147,14 @@ This is the **only safe way** to send from a non-BEAM thread to a BEAM process.
 ```mermaid
 flowchart LR
     subgraph Elixir["Elixir Side"]
-        Behaviour["@callback behaviour<br/>30+ callbacks"]
-        Mock["Mock<br/>(unit tests)"]
-        Nif["Nif<br/>(production)"]
+        Behaviour["callback behaviour"]
+        Mock["Mock - unit tests"]
+        Nif["Nif - production"]
     end
 
     subgraph Rust["Rust Side"]
-        NIFs["NIF Functions<br/>30+ #[rustler::nif]"]
-        Handle["NodeHandle<br/>cmd_tx + peer_id"]
+        NIFs["NIF Functions"]
+        Handle["NodeHandle"]
     end
 
     Behaviour --> Mock
@@ -330,18 +326,11 @@ stateDiagram-v2
     Registered --> Dispatching: Event arrives
     Dispatching --> Registered: send(pid, {:libp2p, type, struct})
     Registered --> Cleaned: Process exits (monitored)
-    Cleaned --> [*]: :DOWN message auto-removes handler
-
-    note right of Registered
-        Handler is Process.monitor'd
-        Stored as {pid, monitor_ref}
-    end note
-
-    note right of Cleaned
-        No dead PIDs accumulate
-        Zero leak over time
-    end note
+    Cleaned --> [*]: DOWN message auto-removes handler
 ```
+
+Handler is `Process.monitor`'d and stored as `{pid, monitor_ref}`.
+No dead PIDs accumulate — zero leak over time.
 
 Each registered handler is `Process.monitor`'d. When the handler process exits,
 the `:DOWN` message triggers automatic cleanup — the handler is removed from the
