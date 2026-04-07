@@ -835,7 +835,7 @@ end
 | **Integration (real NIF)** | 34 | Every function end-to-end with actual libp2p |
 | **Connectivity** | 8 | Join, leave, dynamic churn, connection events |
 | **GossipSub** | 8 | Subscribe, publish, 3-node mesh, mesh_peers, peer_score |
-| **mDNS Discovery** | 3 | Auto-discovery, late joiner, departure detection |
+| **mDNS Discovery** | 3 | Auto-discovery, late joiner, departure (requires multicast, `--exclude mdns` in CI) |
 | **DHT** | 4 | put/get records, find_peer, provide/find_providers, bootstrap |
 | **Request-Response** | 3 | send_request, inbound with channel_id, full round-trip |
 | **Keypair** | 6 | Generate, protobuf round-trip, save/load, stable identity |

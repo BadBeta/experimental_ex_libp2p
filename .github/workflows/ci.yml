@@ -57,7 +57,7 @@ jobs:
         run: mix test
 
       - name: Integration tests
-        run: mix test --include integration --exclude soak --exclude stress --exclude capacity
+        run: mix test --include integration --exclude mdns --exclude soak --exclude stress --exclude capacity
 
       - name: Rust checks
         run: |

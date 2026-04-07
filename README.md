@@ -106,12 +106,14 @@ Supervisor.start_link(children, strategy: :rest_for_one)
 
 ```bash
 mix test                                          # Unit tests (mock NIF)
-mix test --include integration                    # Real NIF tests
+mix test --include integration --exclude mdns     # Real NIF tests
+mix test --include integration                    # All including mDNS (needs multicast)
 mix test --include soak --timeout 3600000         # 50-cycle leak test
 mix test --include security --timeout 300000      # Security suite
 ```
 
 163 unit tests, 65+ integration tests, zero Credo issues, zero Dialyzer errors.
+mDNS tests require multicast networking — exclude with `--exclude mdns` in containers/CI.
 
 ## Documentation
 
