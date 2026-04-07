@@ -4,25 +4,18 @@
 
 Idiomatic Elixir wrapper for [rust-libp2p](https://github.com/libp2p/rust-libp2p) — peer-to-peer networking with full OTP integration.
 
-```mermaid
-flowchart LR
-    subgraph Elixir
-        Facade["ExLibp2p"] --> Node["Node GenServer"]
-    end
-    subgraph NIF["NIF Boundary"]
-        Behaviour["@callback"]
-    end
-    subgraph Rust["tokio + libp2p"]
-        Swarm["Swarm Loop"]
-    end
-
-    Node --> Behaviour --> Swarm
-    Swarm -->|events| Node
-
-    classDef elixir fill:#4e2a8e,stroke:#6b3fa0,color:#fff
-    classDef rust fill:#b7410e,stroke:#d4541e,color:#fff
-    class Facade,Node elixir
-    class Swarm rust
+```
+┌─────────────────────────────────────────────────────┐
+│  Elixir Layer                                       │
+│  ExLibp2p (facade) → Context Modules → Node GenServer│
+├─────────────────────────────────────────────────────┤
+│  NIF Boundary (Rustler)                             │
+│  @callback behaviour → Mock (test) / Nif (prod)    │
+├─────────────────────────────────────────────────────┤
+│  Rust Async Layer (tokio)                           │
+│  Command Channel → Swarm Event Loop → 12 Behaviours│
+└─────────────────────────────────────────────────────┘
+  Commands flow down ↓     Events flow up ↑
 ```
 
 ## Installation
@@ -115,11 +108,11 @@ mix test --include soak --timeout 3600000         # 50-cycle leak test
 mix test --include security --timeout 300000      # Security suite
 ```
 
-163 unit tests, 39+ integration tests, zero Credo issues, zero Dialyzer errors.
+163 unit tests, 65+ integration tests, zero Credo issues, zero Dialyzer errors.
 
 ## Documentation
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — deep technical reference with Mermaid diagrams
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — deep technical reference with diagrams, examples, and coverage tables
 - **`mix docs`** — ExDoc API documentation
 
 ## License
