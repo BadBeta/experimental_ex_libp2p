@@ -22,12 +22,15 @@ Idiomatic Elixir wrapper for [rust-libp2p](https://github.com/libp2p/rust-libp2p
 
 ```elixir
 def deps do
-  [{:ex_libp2p, "~> 0.1.0"}]
+  [{:ex_libp2p, github: "BadBeta/experimental_ex_libp2p"}]
 end
 ```
 
-Precompiled NIFs are provided for Linux (x86_64, aarch64) and macOS (x86_64, Apple Silicon).
-For local development or unsupported platforms, set `EX_LIBP2P_BUILD=true` to compile from source (requires Rust toolchain).
+Requires Rust toolchain for NIF compilation. Set `EX_LIBP2P_BUILD=true` if needed:
+
+```bash
+EX_LIBP2P_BUILD=true mix deps.get && mix compile
+```
 
 ## Quick Start
 
