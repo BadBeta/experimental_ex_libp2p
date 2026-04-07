@@ -122,35 +122,34 @@ defmodule ExLibp2p.OTP.Distribution do
   """
   @spec handle_remote_request(tuple()) :: {:ok, binary()}
   def handle_remote_request({:call, name, message}) do
-    response =
-      try do
-        case GenServer.call(resolve(name), message, @call_timeout) do
-          reply -> encode({:reply, reply})
-        end
-      catch
-        :exit, {:noproc, _} -> encode({:error, :noproc})
-        :exit, {:timeout, _} -> encode({:error, :timeout})
-        :exit, reason -> encode({:error, {:exit, inspect(reason)}})
-      end
+    case whereis(name) do
+      nil ->
+        {:ok, encode({:error, :noproc})}
 
-    {:ok, response}
+      pid ->
+        response =
+          case safe_call(pid, message) do
+            {:ok, reply} -> encode({:reply, reply})
+            {:error, reason} -> encode({:error, reason})
+          end
+
+        {:ok, response}
+    end
   end
 
   def handle_remote_request({:cast, name, message}) do
-    try do
-      GenServer.cast(resolve(name), message)
-    catch
-      :exit, _ -> :ok
+    case whereis(name) do
+      nil -> :ok
+      pid -> GenServer.cast(pid, message)
     end
 
     {:ok, encode({:reply, :ok})}
   end
 
   def handle_remote_request({:send, name, message}) do
-    try do
-      Kernel.send(resolve(name), message)
-    catch
-      :error, _ -> :ok
+    case whereis(name) do
+      nil -> :ok
+      pid -> Kernel.send(pid, message)
     end
 
     {:ok, encode({:reply, :ok})}
@@ -176,10 +175,22 @@ defmodule ExLibp2p.OTP.Distribution do
   def decode(binary) when is_binary(binary) do
     {:ok, :erlang.binary_to_term(binary, [:safe])}
   rescue
+    # binary_to_term raises ArgumentError on malformed input.
+    # This is a system boundary (untrusted network data) — the one
+    # legitimate use of rescue in this module.
     ArgumentError -> {:error, :invalid_message}
   end
 
-  defp resolve(name) when is_atom(name), do: name
+  # Resolve a registered name to a PID, returning nil if not found.
+  defp whereis(name) when is_atom(name), do: Process.whereis(name)
+  defp whereis({:via, registry, key}), do: GenServer.whereis({:via, registry, key})
 
-  defp resolve({:via, registry, key}), do: {:via, registry, key}
+  # Call a GenServer by PID with ok/error return instead of exit.
+  defp safe_call(pid, message) do
+    {:ok, GenServer.call(pid, message, @call_timeout)}
+  catch
+    :exit, {:noproc, _} -> {:error, :noproc}
+    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, reason -> {:error, {:exit, inspect(reason)}}
+  end
 end
