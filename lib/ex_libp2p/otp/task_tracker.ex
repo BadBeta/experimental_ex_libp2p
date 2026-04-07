@@ -142,25 +142,11 @@ defmodule ExLibp2p.OTP.TaskTracker do
   end
 
   def handle_call({:complete, task_id}, _from, state) do
-    case Map.fetch(state.tasks, task_id) do
-      {:ok, task} ->
-        tasks = Map.put(state.tasks, task_id, %{task | status: :completed})
-        {:reply, :ok, %{state | tasks: tasks}}
-
-      :error ->
-        {:reply, {:error, :not_found}, state}
-    end
+    update_task_status(state, task_id, :completed)
   end
 
   def handle_call({:fail, task_id, reason}, _from, state) do
-    case Map.fetch(state.tasks, task_id) do
-      {:ok, task} ->
-        tasks = Map.put(state.tasks, task_id, %{task | status: {:failed, reason}})
-        {:reply, :ok, %{state | tasks: tasks}}
-
-      :error ->
-        {:reply, {:error, :not_found}, state}
-    end
+    update_task_status(state, task_id, {:failed, reason})
   end
 
   def handle_call({:get, task_id}, _from, state) do
@@ -171,21 +157,11 @@ defmodule ExLibp2p.OTP.TaskTracker do
   end
 
   def handle_call({:pending_for_peer, peer_id}, _from, state) do
-    pending =
-      state.tasks
-      |> Map.values()
-      |> Enum.filter(&(&1.status == :pending and &1.peer_id == peer_id))
-
-    {:reply, pending, state}
+    {:reply, pending_tasks(state, fn t -> t.peer_id == peer_id end), state}
   end
 
   def handle_call(:all_pending, _from, state) do
-    pending =
-      state.tasks
-      |> Map.values()
-      |> Enum.filter(&(&1.status == :pending))
-
-    {:reply, pending, state}
+    {:reply, pending_tasks(state, fn _ -> true end), state}
   end
 
   def handle_call({:subscribe, pid}, _from, state) do
@@ -207,32 +183,28 @@ defmodule ExLibp2p.OTP.TaskTracker do
          %Event.ConnectionClosed{peer_id: peer_id, num_established: 0}},
         state
       ) do
-    # Last connection to this peer closed — check for orphaned tasks
-    orphaned =
-      state.tasks
-      |> Map.values()
-      |> Enum.filter(&(&1.status == :pending and &1.peer_id == peer_id))
+    # Last connection to this peer closed — find and mark orphaned tasks in one pass
+    {updated_tasks, orphaned} =
+      Enum.reduce(state.tasks, {state.tasks, []}, fn
+        {id, %{status: :pending, peer_id: ^peer_id} = task}, {tasks_acc, orphaned_acc} ->
+          failed = %{task | status: {:failed, :peer_lost}}
+          {Map.put(tasks_acc, id, failed), [failed | orphaned_acc]}
+
+        _entry, acc ->
+          acc
+      end)
 
     case orphaned do
       [] ->
         {:noreply, state}
 
-      tasks ->
-        # Mark all orphaned tasks as failed
-        updated_tasks =
-          Enum.reduce(tasks, state.tasks, fn task, acc ->
-            Map.put(acc, task.id, %{task | status: {:failed, :peer_lost}})
-          end)
-
-        failed_tasks = Enum.map(tasks, &%{&1 | status: {:failed, :peer_lost}})
-
-        # Notify subscribers
+      _ ->
         for pid <- state.subscribers, Process.alive?(pid) do
-          Kernel.send(pid, {:task_tracker, :peer_lost, peer_id, failed_tasks})
+          Kernel.send(pid, {:task_tracker, :peer_lost, peer_id, orphaned})
         end
 
         Logger.warning(
-          "[ExLibp2p.OTP.TaskTracker] Peer #{peer_id} lost with #{length(tasks)} pending tasks"
+          "[ExLibp2p.OTP.TaskTracker] Peer #{peer_id} lost with #{length(orphaned)} pending tasks"
         )
 
         {:noreply, %{state | tasks: updated_tasks}}
@@ -245,5 +217,22 @@ defmodule ExLibp2p.OTP.TaskTracker do
   def handle_info(msg, state) do
     Logger.debug("[ExLibp2p.OTP.TaskTracker] Unexpected message: #{inspect(msg)}")
     {:noreply, state}
+  end
+
+  # --- Private helpers ---
+
+  defp update_task_status(state, task_id, new_status) do
+    case Map.fetch(state.tasks, task_id) do
+      {:ok, task} ->
+        tasks = Map.put(state.tasks, task_id, %{task | status: new_status})
+        {:reply, :ok, %{state | tasks: tasks}}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  defp pending_tasks(state, extra_filter) do
+    for {_id, %{status: :pending} = task} <- state.tasks, extra_filter.(task), do: task
   end
 end

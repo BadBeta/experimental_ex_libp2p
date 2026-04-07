@@ -298,19 +298,21 @@ defmodule ExLibp2p.Node do
   end
 
   def handle_call({:register_handler, event_type, pid}, _from, state) do
-    if already_registered?(state, event_type, pid) do
-      {:reply, :ok, state}
-    else
-      ref = Process.monitor(pid)
+    case already_registered?(state, event_type, pid) do
+      true ->
+        {:reply, :ok, state}
 
-      handlers =
-        Map.update(state.event_handlers, event_type, [{pid, ref}], fn entries ->
-          [{pid, ref} | entries]
-        end)
+      false ->
+        ref = Process.monitor(pid)
 
-      monitors = Map.put(state.monitors, ref, {pid, event_type})
+        handlers =
+          Map.update(state.event_handlers, event_type, [{pid, ref}], fn entries ->
+            [{pid, ref} | entries]
+          end)
 
-      {:reply, :ok, %{state | event_handlers: handlers, monitors: monitors}}
+        monitors = Map.put(state.monitors, ref, {pid, event_type})
+
+        {:reply, :ok, %{state | event_handlers: handlers, monitors: monitors}}
     end
   end
 
