@@ -302,15 +302,21 @@ The `#[derive(NetworkBehaviour)]` macro generates:
 
 ### Event Routing
 
-The swarm loop dispatches events by matching the generated enum:
+```mermaid
+flowchart LR
+    SE["SwarmEvent"] --> BM{"Behaviour?"}
+    BM -->|Gossipsub| EV1["events.rs"]
+    BM -->|Kademlia| EV2["events.rs"]
+    BM -->|mDNS| EV3["events.rs"]
+    BM -->|AutoNAT| EV4["events.rs"]
+    BM -->|DCUtR| EV5["events.rs"]
+    BM -->|ReqResp Inbound| NR["node.rs"]
+    BM -->|ReqResp Response| NR2["node.rs"]
+    SE -->|ConnectionEstablished| EV6["events.rs"]
+    SE -->|ConnectionClosed| EV7["events.rs"]
 
-```
-SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(...)) → events.rs
-SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(...))  → events.rs
-SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(Message::Request{...}))
-    → node.rs (extracts ResponseChannel, stores in HashMap, sends to Elixir)
-SwarmEvent::ConnectionEstablished{...} → events.rs
-SwarmEvent::ConnectionClosed{...}     → events.rs
+    NR -->|"Extract ResponseChannel"| Store["HashMap by channel ID"]
+    Store -->|"send_response uses it"| Reply["Response sent"]
 ```
 
 Request-response inbound requests get special handling: the `ResponseChannel`
