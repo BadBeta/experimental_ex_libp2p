@@ -77,17 +77,17 @@ sequenceDiagram
     participant App as Application
     participant GS as GenServer
     participant NIF as NIF Function
-    participant Chan as mpsc Channel
-    participant Loop as Swarm Loop
+    participant CH as mpsc Channel
+    participant SL as Swarm Loop
 
     App->>GS: GenServer.call publish
     GS->>NIF: native.publish
     Note over NIF: Normal scheduler, under 1ms
-    NIF->>Chan: cmd_tx.send Publish command
+    NIF->>CH: cmd_tx.send Publish command
     NIF-->>GS: ok
     GS-->>App: ok
-    Chan->>Loop: tokio select receives command
-    Loop->>Loop: gossipsub.publish
+    CH->>SL: tokio select receives command
+    SL->>SL: gossipsub.publish
 ```
 
 Fire-and-forget commands (dial, publish, subscribe) return `:ok` immediately.
@@ -100,17 +100,17 @@ sequenceDiagram
     participant App as Application
     participant GS as GenServer
     participant NIF as NIF Function
-    participant Chan as mpsc and oneshot
-    participant Loop as Swarm Loop
+    participant CH as mpsc and oneshot
+    participant SL as Swarm Loop
 
     App->>GS: GenServer.call connected_peers
     GS->>NIF: native.connected_peers
     Note over NIF: DirtyCpu scheduler, blocks until reply
-    NIF->>Chan: send ConnectedPeers with oneshot
-    Chan->>Loop: tokio select receives command
-    Loop->>Loop: swarm.connected_peers collect
-    Loop->>Chan: oneshot.send peers
-    Chan-->>NIF: blocking_recv returns peers
+    NIF->>CH: send ConnectedPeers with oneshot
+    CH->>SL: tokio select receives command
+    SL->>SL: swarm.connected_peers collect
+    SL->>CH: oneshot.send peers
+    CH-->>NIF: blocking_recv returns peers
     NIF-->>GS: list of peer ID strings
     GS-->>App: ok with PeerId structs
 ```
@@ -123,13 +123,13 @@ which is why it runs on a dirty scheduler — never block a normal BEAM schedule
 ```mermaid
 sequenceDiagram
     participant Net as Network
-    participant Loop as Swarm Loop
+    participant SL as Swarm Loop
     participant Env as OwnedEnv
     participant GS as Node GenServer
     participant Handler as Event Handler
 
-    Net->>Loop: SwarmEvent Behaviour
-    Loop->>Env: OwnedEnv new
+    Net->>SL: SwarmEvent Behaviour
+    SL->>Env: OwnedEnv new
     Env->>Env: Encode event as Elixir term
     Env->>GS: send_and_clear to pid
     Note over Env: Allocates 4KB, released after send
