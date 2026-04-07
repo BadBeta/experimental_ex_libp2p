@@ -1,6 +1,6 @@
 # ExLibp2p
 
-> A full experimental Elixir wrapper for the Rust libp2p library with some OTP application layer on top. More info in the [documentation](ARCHITECTURE.md). Not for production use.
+> A full experimental Elixir wrapper for the Rust libp2p library with some OTP application layer on top. See the [architecture reference](ARCHITECTURE.md) and [design decisions](DESIGN_DECISIONS.md). Not for production use.
 
 Idiomatic Elixir wrapper for [rust-libp2p](https://github.com/libp2p/rust-libp2p) — peer-to-peer networking with full OTP integration.
 
@@ -118,6 +118,7 @@ mDNS tests require multicast networking — exclude with `--exclude mdns` in con
 ## Documentation
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — deep technical reference with diagrams, examples, and coverage tables
+- **[DESIGN_DECISIONS.md](DESIGN_DECISIONS.md)** — comprehensive discussion of architectural challenges, trade-offs, alternative approaches (including Yggdrasil mesh overlay evaluation), and rationale behind every major decision
 - **`mix docs`** — ExDoc API documentation
 
 ## License
