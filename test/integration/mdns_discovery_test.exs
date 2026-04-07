@@ -2,14 +2,20 @@ defmodule ExLibp2p.Integration.MdnsDiscoveryTest do
   @moduledoc """
   Tests that nodes discover each other automatically via mDNS
   on the local network — no manual dialing needed.
+
+  These tests require multicast networking on the loopback interface.
+  They may fail in containers, VMs, or CI environments without multicast.
+  Exclude with: `mix test --exclude mdns`
   """
   use ExLibp2p.NifCase, async: false
 
   alias ExLibp2p.{Discovery, Node}
 
   @moduletag timeout: 60_000
+  @moduletag :mdns
 
   @tag :integration
+  @tag :mdns
   test "two nodes discover each other via mDNS without dialing" do
     {:ok, node_a} = start_test_node(enable_mdns: true)
     {:ok, node_b} = start_test_node(enable_mdns: true)
