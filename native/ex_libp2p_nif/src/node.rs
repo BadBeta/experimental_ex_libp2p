@@ -33,8 +33,9 @@ fn get_runtime() -> &'static Runtime {
 }
 
 /// Handle stored in ResourceArc — holds only the command channel sender.
+/// Per rust-nif rule 15: hold a channel sender, NOT the Swarm itself.
 pub struct NodeHandle {
-    pub cmd_tx: mpsc::UnboundedSender<Command>,
+    pub cmd_tx: mpsc::Sender<Command>,
     pub peer_id: String,
 }
 
@@ -43,7 +44,8 @@ impl rustler::Resource for NodeHandle {}
 
 impl Drop for NodeHandle {
     fn drop(&mut self) {
-        let _ = self.cmd_tx.send(Command::Shutdown);
+        // try_send because we're in Drop — can't block, can't async
+        let _ = self.cmd_tx.try_send(Command::Shutdown);
     }
 }
 
@@ -215,7 +217,8 @@ pub fn start_node_inner(
             .map_err(|e| format!("listen: {e}"))?;
     }
 
-    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    // FIXED: Use bounded channel for backpressure (was unbounded — OOM risk under load)
+    let (cmd_tx, cmd_rx) = mpsc::channel(512);
     let handle_tx = cmd_tx.clone();
 
     runtime.spawn(async move {
@@ -237,7 +240,7 @@ pub fn start_node_inner(
 /// The main swarm event loop.
 async fn swarm_loop(
     mut swarm: libp2p::Swarm<NodeBehaviour>,
-    mut cmd_rx: mpsc::UnboundedReceiver<Command>,
+    mut cmd_rx: mpsc::Receiver<Command>,
 ) {
     let mut event_handler: Option<LocalPid> = None;
 

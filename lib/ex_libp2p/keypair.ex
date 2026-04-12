@@ -90,9 +90,13 @@ defmodule ExLibp2p.Keypair do
   """
   @spec save!(t(), Path.t()) :: :ok
   def save!(%__MODULE__{protobuf_bytes: bytes}, path) when is_binary(bytes) do
-    File.write!(path, bytes)
-
-    File.chmod!(path, 0o600)
+    # Atomic write: write to temp file, set permissions, then rename.
+    # This prevents a crash between write and chmod from leaving the key
+    # world-readable, and prevents partial reads from concurrent processes.
+    tmp_path = path <> ".tmp"
+    File.write!(tmp_path, bytes)
+    File.chmod!(tmp_path, 0o600)
+    File.rename!(tmp_path, path)
     :ok
   end
 

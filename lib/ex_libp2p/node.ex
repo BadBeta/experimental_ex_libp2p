@@ -192,22 +192,22 @@ defmodule ExLibp2p.Node do
   end
 
   def handle_call({:dial, addr}, _from, state) do
-    result = state.native.dial(state.handle, addr)
+    result = normalize_ok(state.native.dial(state.handle, addr))
     {:reply, result, state}
   end
 
   def handle_call({:publish, topic, data}, _from, state) do
-    result = state.native.publish(state.handle, topic, data)
+    result = normalize_ok(state.native.publish(state.handle, topic, data))
     {:reply, result, state}
   end
 
   def handle_call({:subscribe, topic}, _from, state) do
-    result = state.native.subscribe(state.handle, topic)
+    result = normalize_ok(state.native.subscribe(state.handle, topic))
     {:reply, result, state}
   end
 
   def handle_call({:unsubscribe, topic}, _from, state) do
-    result = state.native.unsubscribe(state.handle, topic)
+    result = normalize_ok(state.native.unsubscribe(state.handle, topic))
     {:reply, result, state}
   end
 
@@ -389,6 +389,12 @@ defmodule ExLibp2p.Node do
       send(pid, {:libp2p, event_type, event})
     end
   end
+
+  # NIF fire-and-forget commands return {:ok, true} | {:error, reason}.
+  # Normalize to :ok | {:error, reason} for Elixir callers.
+  defp normalize_ok({:ok, _}), do: :ok
+  defp normalize_ok({:error, _} = err), do: err
+  defp normalize_ok(other), do: other
 
   defp event_type_for(%Event.ConnectionEstablished{}), do: :connection_established
   defp event_type_for(%Event.ConnectionClosed{}), do: :connection_closed

@@ -11,6 +11,8 @@ rustler::atoms! {
     keypair_generation_failed,
     runtime_creation_failed,
     nif_panic,
+    channel_full,
+    peers_discovered,
     // Event atoms
     libp2p_event,
     libp2p_noop,

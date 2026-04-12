@@ -83,13 +83,14 @@ fn bandwidth_stats(handle: ResourceArc<NodeHandle>) -> (rustler::Atom, u64, u64)
 }
 
 /// Sends a query command with a oneshot reply channel and blocks for the response.
-/// Returns `None` if the node is stopped or the channel is dropped.
+/// Returns `None` if the node is stopped or the channel is full/dropped.
+/// MUST be called from a DirtyCpu/DirtyIo scheduler — blocking_recv blocks the thread.
 fn query<T>(
     handle: &ResourceArc<NodeHandle>,
     make_cmd: impl FnOnce(oneshot::Sender<T>) -> Command,
 ) -> Option<T> {
     let (tx, rx) = oneshot::channel();
-    handle.cmd_tx.send(make_cmd(tx)).ok()?;
+    handle.cmd_tx.try_send(make_cmd(tx)).ok()?;
     rx.blocking_recv().ok()
 }
 
@@ -98,35 +99,36 @@ fn peer_ids_to_strings(peers: Vec<libp2p::PeerId>) -> Vec<String> {
 }
 
 // ── Fire-and-forget commands ────────────────────────────────────
-// These return :ok directly or {:error, reason} — no Result wrapper.
+// Return :ok | {:error, "reason"} — using Result<bool, String> per rust-nif
+// rule 2 to avoid {:ok, :ok} double-wrapping. Elixir sees {:ok, true} on
+// success and {:error, "node_stopped"} or {:error, "channel_full"} on failure.
 
 #[rustler::nif]
-fn dial(handle: ResourceArc<NodeHandle>, addr: String) -> rustler::Atom {
-    let multiaddr = match addr.parse::<libp2p::Multiaddr>() {
-        Ok(m) => m,
-        Err(_) => return atoms::error(),
-    };
-    let _ = send_cmd(&handle, Command::Dial { addr: multiaddr });
-    atoms::ok()
+fn dial(handle: ResourceArc<NodeHandle>, addr: String) -> Result<bool, String> {
+    let multiaddr = addr
+        .parse::<libp2p::Multiaddr>()
+        .map_err(|e| format!("invalid multiaddr: {e}"))?;
+    send_cmd(&handle, Command::Dial { addr: multiaddr })?;
+    Ok(true)
 }
 
 #[rustler::nif]
-fn publish(handle: ResourceArc<NodeHandle>, topic: String, data: Binary) -> rustler::Atom {
+fn publish(handle: ResourceArc<NodeHandle>, topic: String, data: Binary) -> Result<bool, String> {
     let bytes = data.as_slice().to_vec();
-    let _ = send_cmd(&handle, Command::Publish { topic, data: bytes });
-    atoms::ok()
+    send_cmd(&handle, Command::Publish { topic, data: bytes })?;
+    Ok(true)
 }
 
 #[rustler::nif]
-fn subscribe(handle: ResourceArc<NodeHandle>, topic: String) -> rustler::Atom {
-    let _ = send_cmd(&handle, Command::Subscribe { topic });
-    atoms::ok()
+fn subscribe(handle: ResourceArc<NodeHandle>, topic: String) -> Result<bool, String> {
+    send_cmd(&handle, Command::Subscribe { topic })?;
+    Ok(true)
 }
 
 #[rustler::nif]
-fn unsubscribe(handle: ResourceArc<NodeHandle>, topic: String) -> rustler::Atom {
-    let _ = send_cmd(&handle, Command::Unsubscribe { topic });
-    atoms::ok()
+fn unsubscribe(handle: ResourceArc<NodeHandle>, topic: String) -> Result<bool, String> {
+    send_cmd(&handle, Command::Unsubscribe { topic })?;
+    Ok(true)
 }
 
 // ── GossipSub advanced ─────────────────────────────────────────
@@ -346,11 +348,21 @@ fn rendezvous_unregister(
 fn send_cmd(
     handle: &ResourceArc<NodeHandle>,
     cmd: Command,
-) -> Result<(), (rustler::Atom, rustler::Atom)> {
+) -> Result<(), String> {
+    // try_send: returns immediately, never blocks the BEAM scheduler.
+    // Bounded channel provides backpressure — Full means the swarm is
+    // behind on processing commands, Closed means the swarm loop exited.
     handle
         .cmd_tx
-        .send(cmd)
-        .map_err(|_| (atoms::error(), atoms::node_stopped()))
+        .try_send(cmd)
+        .map_err(|e| match e {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                "command channel full — swarm is overloaded".to_string()
+            }
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                "node stopped — swarm event loop has exited".to_string()
+            }
+        })
 }
 
 // ── Init ────────────────────────────────────────────────────────

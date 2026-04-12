@@ -117,23 +117,34 @@ pub fn handle_swarm_event(event: SwarmEvent<NodeBehaviourEvent>, pid: &LocalPid)
                 .encode(env)
         }
 
-        // mDNS
+        // mDNS — collect ALL discovered peers, not just the last one
         SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(libp2p::mdns::Event::Discovered(
             peers,
         ))) => {
-            let mut result: Term = atoms::libp2p_noop().encode(env);
-            for (peer_id, addr) in peers {
-                result = (
+            let peer_list: Vec<(String, Vec<String>)> = peers
+                .into_iter()
+                .map(|(peer_id, addr)| (peer_id.to_base58(), vec![addr.to_string()]))
+                .collect();
+
+            if peer_list.is_empty() {
+                atoms::libp2p_noop().encode(env)
+            } else if peer_list.len() == 1 {
+                let (peer_id, addrs) = &peer_list[0];
+                (
                     atoms::libp2p_event(),
-                    (
-                        atoms::peer_discovered(),
-                        peer_id.to_base58(),
-                        vec![addr.to_string()],
-                    ),
+                    (atoms::peer_discovered(), peer_id.clone(), addrs.clone()),
                 )
-                    .encode(env);
+                    .encode(env)
+            } else {
+                // Send batch discovery event for multiple peers
+                let encoded_peers: Vec<Term> = peer_list
+                    .iter()
+                    .map(|(pid, addrs)| {
+                        (atoms::peer_discovered(), pid.clone(), addrs.clone()).encode(env)
+                    })
+                    .collect();
+                (atoms::libp2p_event(), (atoms::peers_discovered(), encoded_peers)).encode(env)
             }
-            result
         }
 
         // Kademlia
@@ -229,29 +240,34 @@ pub fn handle_swarm_event(event: SwarmEvent<NodeBehaviourEvent>, pid: &LocalPid)
         )
             .encode(env),
 
-        // Rendezvous client — discovered peers
+        // Rendezvous client — discovered peers (FIXED: send ALL registrations, not just last)
         SwarmEvent::Behaviour(NodeBehaviourEvent::RendezvousClient(
             libp2p::rendezvous::client::Event::Discovered {
                 registrations,
                 ..
             },
         )) => {
-            // Send one peer_discovered event per registration
-            let mut result: Term = atoms::libp2p_noop().encode(env);
-            for registration in registrations {
-                let addrs: Vec<String> = registration.record.addresses().iter()
-                    .map(|a| a.to_string()).collect();
-                result = (
-                    atoms::libp2p_event(),
+            let encoded_peers: Vec<Term> = registrations
+                .into_iter()
+                .map(|registration| {
+                    let addrs: Vec<String> = registration.record.addresses().iter()
+                        .map(|a| a.to_string()).collect();
                     (
                         atoms::peer_discovered(),
                         registration.record.peer_id().to_base58(),
                         addrs,
-                    ),
-                )
-                    .encode(env);
+                    )
+                        .encode(env)
+                })
+                .collect();
+
+            if encoded_peers.is_empty() {
+                atoms::libp2p_noop().encode(env)
+            } else if encoded_peers.len() == 1 {
+                (atoms::libp2p_event(), encoded_peers.into_iter().next().unwrap()).encode(env)
+            } else {
+                (atoms::libp2p_event(), (atoms::peers_discovered(), encoded_peers)).encode(env)
             }
-            result
         }
 
         _ => atoms::libp2p_noop().encode(env),
@@ -391,7 +407,21 @@ fn encode_kad_event(env: Env, event: libp2p::kad::Event) -> Term {
 }
 
 fn encode_binary<'a>(env: Env<'a>, data: &[u8]) -> Term<'a> {
-    let mut bin = rustler::OwnedBinary::new(data.len()).expect("binary allocation");
-    bin.as_mut_slice().copy_from_slice(data);
-    bin.release(env).encode(env)
+    // FIXED: handle allocation failure gracefully instead of panicking
+    // (panicking in a NIF crashes the entire BEAM VM)
+    match rustler::OwnedBinary::new(data.len()) {
+        Some(mut bin) => {
+            bin.as_mut_slice().copy_from_slice(data);
+            bin.release(env).encode(env)
+        }
+        None => {
+            tracing::error!(
+                "failed to allocate {} byte binary — memory pressure",
+                data.len()
+            );
+            // Return empty binary instead of crashing
+            let empty = rustler::OwnedBinary::new(0).unwrap();
+            empty.release(env).encode(env)
+        }
+    }
 }
