@@ -171,7 +171,14 @@ defmodule ExLibp2p.OTP.Distribution do
   Uses `:safe` mode to reject unknown atoms — prevents atom table
   exhaustion from untrusted peers.
   """
-  @spec decode(binary()) :: {:ok, term()} | {:error, :invalid_message}
+  # Maximum payload size (1 MB) — prevents memory exhaustion from oversized messages.
+  @max_payload_bytes 1_048_576
+
+  @spec decode(binary()) :: {:ok, term()} | {:error, :invalid_message | :payload_too_large}
+  def decode(binary) when is_binary(binary) and byte_size(binary) > @max_payload_bytes do
+    {:error, :payload_too_large}
+  end
+
   def decode(binary) when is_binary(binary) do
     {:ok, :erlang.binary_to_term(binary, [:safe])}
   rescue

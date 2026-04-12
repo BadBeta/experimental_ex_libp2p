@@ -60,21 +60,21 @@ fn get_peer_id(handle: ResourceArc<NodeHandle>) -> String {
 
 /// Returns the list or an empty list if the node is stopped.
 /// The Elixir GenServer wraps the result in {:ok, _}.
-#[rustler::nif(schedule = "DirtyCpu")]
+#[rustler::nif(schedule = "DirtyIo")]
 fn connected_peers(handle: ResourceArc<NodeHandle>) -> Vec<String> {
     query(&handle, |tx| Command::ConnectedPeers { reply: tx })
         .map(peer_ids_to_strings)
         .unwrap_or_default()
 }
 
-#[rustler::nif(schedule = "DirtyCpu")]
+#[rustler::nif(schedule = "DirtyIo")]
 fn listening_addrs(handle: ResourceArc<NodeHandle>) -> Vec<String> {
     query(&handle, |tx| Command::ListeningAddrs { reply: tx })
         .map(|addrs| addrs.into_iter().map(|a| a.to_string()).collect())
         .unwrap_or_default()
 }
 
-#[rustler::nif(schedule = "DirtyCpu")]
+#[rustler::nif(schedule = "DirtyIo")]
 fn bandwidth_stats(handle: ResourceArc<NodeHandle>) -> (rustler::Atom, u64, u64) {
     match query(&handle, |tx| Command::BandwidthStats { reply: tx }) {
         Some((bytes_in, bytes_out)) => (atoms::ok(), bytes_in, bytes_out),
@@ -84,7 +84,7 @@ fn bandwidth_stats(handle: ResourceArc<NodeHandle>) -> (rustler::Atom, u64, u64)
 
 /// Sends a query command with a oneshot reply channel and blocks for the response.
 /// Returns `None` if the node is stopped or the channel is full/dropped.
-/// MUST be called from a DirtyCpu/DirtyIo scheduler — blocking_recv blocks the thread.
+/// MUST be called from a DirtyIo scheduler — blocking_recv blocks the thread.
 fn query<T>(
     handle: &ResourceArc<NodeHandle>,
     make_cmd: impl FnOnce(oneshot::Sender<T>) -> Command,

@@ -20,7 +20,7 @@ defmodule ExLibp2p.Node.Config do
   @enforce_keys []
   # credo:disable-for-next-line
   defstruct keypair_bytes: nil,
-            listen_addrs: ["/ip4/0.0.0.0/tcp/0"],
+            listen_addrs: ["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic-v1"],
             bootstrap_peers: [],
             # GossipSub
             gossipsub_topics: [],
@@ -137,7 +137,7 @@ defmodule ExLibp2p.Node.Config do
   ## Examples
 
       iex> ExLibp2p.Node.Config.new().listen_addrs
-      ["/ip4/0.0.0.0/tcp/0"]
+      ["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic-v1"]
 
   """
   @spec new() :: t()

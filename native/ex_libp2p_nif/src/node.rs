@@ -15,7 +15,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
@@ -78,7 +78,10 @@ pub fn start_node_inner(
         .with_max_pending_outgoing(Some(config.max_pending_outgoing))
         .with_max_established_incoming(Some(config.max_established_incoming))
         .with_max_established_outgoing(Some(config.max_established_outgoing))
-        .with_max_established_per_peer(Some(config.max_established_per_peer));
+        .with_max_established_per_peer(Some(config.max_established_per_peer))
+        .with_max_established(Some(
+            config.max_established_incoming as u32 + config.max_established_outgoing as u32,
+        ));
 
     // GossipSub
     let message_id_fn = |message: &gossipsub::Message| {
@@ -99,23 +102,61 @@ pub fn start_node_inner(
         .build()
         .map_err(|e| format!("gossipsub config: {e}"))?;
 
-    let gossipsub_behaviour = gossipsub::Behaviour::new(
+    let mut gossipsub_behaviour = gossipsub::Behaviour::new(
         gossipsub::MessageAuthenticity::Signed(keypair.clone()),
         gossipsub_config,
     )
     .map_err(|e| format!("gossipsub behaviour: {e}"))?;
 
-    // Kademlia
-    let store = kad::store::MemoryStore::new(local_peer_id);
-    let kademlia = kad::Behaviour::new(local_peer_id, store);
+    // Wire peer scoring if configured
+    if let Some(ref ps) = config.peer_score {
+        let peer_score_params = gossipsub::PeerScoreParams {
+            ip_colocation_factor_weight: ps.ip_colocation_factor_weight,
+            ip_colocation_factor_threshold: ps.ip_colocation_factor_threshold,
+            behaviour_penalty_weight: ps.behaviour_penalty_weight,
+            behaviour_penalty_decay: ps.behaviour_penalty_decay,
+            ..Default::default()
+        };
+
+        let thresholds = match &config.thresholds {
+            Some(t) => gossipsub::PeerScoreThresholds {
+                gossip_threshold: t.gossip_threshold,
+                publish_threshold: t.publish_threshold,
+                graylist_threshold: t.graylist_threshold,
+                accept_px_threshold: t.accept_px_threshold,
+                opportunistic_graft_threshold: t.opportunistic_graft_threshold,
+                ..Default::default()
+            },
+            None => gossipsub::PeerScoreThresholds::default(),
+        };
+
+        gossipsub_behaviour
+            .with_peer_score(peer_score_params, thresholds)
+            .map_err(|e| format!("peer scoring: {e}"))?;
+    }
+
+    // Kademlia (optional)
+    let kademlia = if config.enable_kademlia {
+        let store = kad::store::MemoryStore::new(local_peer_id);
+        Some(kad::Behaviour::new(local_peer_id, store)).into()
+    } else {
+        None.into()
+    };
 
     // Identify
     let identify_config = identify::Config::new("/ex-libp2p/0.1.0".into(), keypair.public());
     let identify_behaviour = identify::Behaviour::new(identify_config);
 
-    // mDNS
-    let mdns_behaviour = mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer_id)
-        .map_err(|e| format!("mdns: {e}"))?;
+    // mDNS (optional)
+    let mdns_behaviour = if config.enable_mdns {
+        Some(
+            mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer_id)
+                .map_err(|e| format!("mdns: {e}"))?,
+        )
+        .into()
+    } else {
+        None.into()
+    };
 
     // Request-Response (CBOR codec, binary payloads)
     let rpc_protocol = StreamProtocol::try_from_owned(config.rpc_protocol_name.clone())
@@ -132,13 +173,55 @@ pub fn start_node_inner(
 
     let idle_timeout = Duration::from_secs(config.idle_connection_timeout_secs);
 
-    // Relay server config
-    let relay_server_config = relay::Config {
-        max_reservations: config.relay_max_reservations as usize,
-        max_circuits: config.relay_max_circuits as usize,
-        max_circuit_duration: Duration::from_secs(config.relay_max_circuit_duration_secs),
-        max_circuit_bytes: config.relay_max_circuit_bytes,
-        ..Default::default()
+    // Relay server config (optional)
+    let relay_server_behaviour = if config.enable_relay_server {
+        let relay_server_config = relay::Config {
+            max_reservations: config.relay_max_reservations as usize,
+            max_circuits: config.relay_max_circuits as usize,
+            max_circuit_duration: Duration::from_secs(config.relay_max_circuit_duration_secs),
+            max_circuit_bytes: config.relay_max_circuit_bytes,
+            ..Default::default()
+        };
+        Some(relay_server_config).map(|cfg| relay::Behaviour::new(local_peer_id, cfg)).into()
+    } else {
+        None.into()
+    };
+
+    // Optional NAT traversal behaviours
+    let dcutr_behaviour = if config.enable_relay {
+        Some(dcutr::Behaviour::new(local_peer_id)).into()
+    } else {
+        None.into()
+    };
+
+    let autonat_behaviour = if config.enable_autonat {
+        Some(autonat::Behaviour::new(local_peer_id, autonat::Config::default())).into()
+    } else {
+        None.into()
+    };
+
+    let upnp_behaviour: libp2p::swarm::behaviour::toggle::Toggle<upnp::tokio::Behaviour> =
+        if config.enable_upnp {
+            Some(upnp::tokio::Behaviour::default()).into()
+        } else {
+            None.into()
+        };
+
+    // Optional rendezvous
+    let rendezvous_client_behaviour = if config.enable_rendezvous_client {
+        // Note: keypair is moved into the closure below, so clone here
+        Some(rendezvous::client::Behaviour::new(keypair.clone())).into()
+    } else {
+        None.into()
+    };
+
+    let rendezvous_server_behaviour = if config.enable_rendezvous_server {
+        Some(rendezvous::server::Behaviour::new(
+            rendezvous::server::Config::default(),
+        ))
+        .into()
+    } else {
+        None.into()
     };
 
     // Memory-based connection limits (reject new connections at 90% system memory)
@@ -161,36 +244,30 @@ pub fn start_node_inner(
         .with_relay_client(noise::Config::new, yamux::Config::default)
         .map_err(|e| format!("relay client: {e}"))?
         .with_bandwidth_metrics(&mut libp2p::metrics::Registry::default())
-        .with_behaviour(|key, relay_client| {
-            let local_peer_id = key.public().to_peer_id();
-
+        .with_behaviour(|_key, relay_client| {
             Ok(NodeBehaviour {
-                // Infrastructure
+                // Infrastructure — always present
                 connection_limits: connection_limits::Behaviour::new(limits),
                 memory_limits,
                 identify: identify_behaviour,
                 ping: ping::Behaviour::default(),
 
-                // Application protocols
+                // Application protocols — always present
                 gossipsub: gossipsub_behaviour,
-                kademlia,
                 request_response: request_response_behaviour,
 
-                // Rendezvous
-                rendezvous_client: rendezvous::client::Behaviour::new(key.clone()),
-                rendezvous_server: rendezvous::server::Behaviour::new(
-                    rendezvous::server::Config::default(),
-                ),
-
-                // Discovery
+                // Optional protocols — controlled by enable_* flags
+                kademlia,
                 mdns: mdns_behaviour,
+                rendezvous_client: rendezvous_client_behaviour,
+                rendezvous_server: rendezvous_server_behaviour,
 
                 // NAT traversal
                 relay_client,
-                relay_server: relay::Behaviour::new(local_peer_id, relay_server_config),
-                dcutr: dcutr::Behaviour::new(local_peer_id),
-                autonat: autonat::Behaviour::new(local_peer_id, autonat::Config::default()),
-                upnp: upnp::tokio::Behaviour::default(),
+                relay_server: relay_server_behaviour,
+                dcutr: dcutr_behaviour,
+                autonat: autonat_behaviour,
+                upnp: upnp_behaviour,
             })
         })
         .map_err(|e| format!("behaviour: {e}"))?
@@ -248,12 +325,26 @@ async fn swarm_loop(
     // When an inbound request arrives, we store its ResponseChannel here
     // keyed by a unique channel ID. When the Elixir side calls send_response
     // with that channel ID, we retrieve it and send the response.
-    let mut pending_responses: HashMap<String, request_response::ResponseChannel<Vec<u8>>> =
+    // Each entry is timestamped for TTL eviction (default 60s).
+    let mut pending_responses: HashMap<String, (request_response::ResponseChannel<Vec<u8>>, Instant)> =
         HashMap::new();
     let mut channel_counter: u64 = 0;
+    let response_ttl = Duration::from_secs(60);
+    let mut eviction_interval = tokio::time::interval(Duration::from_secs(15));
 
     loop {
         tokio::select! {
+            _ = eviction_interval.tick() => {
+                let now = Instant::now();
+                pending_responses.retain(|id, (_, created)| {
+                    let keep = now.duration_since(*created) < response_ttl;
+                    if !keep {
+                        tracing::debug!(%id, "evicting stale pending response");
+                    }
+                    keep
+                });
+            }
+
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(Command::RegisterEventHandler { pid }) => {
@@ -318,28 +409,52 @@ async fn swarm_loop(
 
                     // ── DHT ─────────────────────────────────────
                     Some(Command::DhtPut { key, value }) => {
-                        let record = kad::Record::new(key, value);
-                        if let Err(e) = swarm.behaviour_mut().kademlia.put_record(record, kad::Quorum::One) {
-                            tracing::warn!(%e, "dht put failed");
+                        if let Some(kad) = swarm.behaviour_mut().kademlia.as_mut() {
+                            let record = kad::Record::new(key, value);
+                            if let Err(e) = kad.put_record(record, kad::Quorum::One) {
+                                tracing::warn!(%e, "dht put failed");
+                            }
+                        } else {
+                            tracing::warn!("DHT not enabled — ignoring dht_put");
                         }
                     }
                     Some(Command::DhtGet { key }) => {
-                        swarm.behaviour_mut().kademlia.get_record(key.into());
+                        if let Some(kad) = swarm.behaviour_mut().kademlia.as_mut() {
+                            kad.get_record(key.into());
+                        } else {
+                            tracing::warn!("DHT not enabled — ignoring dht_get");
+                        }
                     }
                     Some(Command::DhtFindPeer { peer_id }) => {
-                        swarm.behaviour_mut().kademlia.get_closest_peers(peer_id);
+                        if let Some(kad) = swarm.behaviour_mut().kademlia.as_mut() {
+                            kad.get_closest_peers(peer_id);
+                        } else {
+                            tracing::warn!("DHT not enabled — ignoring dht_find_peer");
+                        }
                     }
                     Some(Command::DhtProvide { key }) => {
-                        if let Err(e) = swarm.behaviour_mut().kademlia.start_providing(key.into()) {
-                            tracing::warn!(%e, "dht provide failed");
+                        if let Some(kad) = swarm.behaviour_mut().kademlia.as_mut() {
+                            if let Err(e) = kad.start_providing(key.into()) {
+                                tracing::warn!(%e, "dht provide failed");
+                            }
+                        } else {
+                            tracing::warn!("DHT not enabled — ignoring dht_provide");
                         }
                     }
                     Some(Command::DhtFindProviders { key }) => {
-                        swarm.behaviour_mut().kademlia.get_providers(key.into());
+                        if let Some(kad) = swarm.behaviour_mut().kademlia.as_mut() {
+                            kad.get_providers(key.into());
+                        } else {
+                            tracing::warn!("DHT not enabled — ignoring dht_find_providers");
+                        }
                     }
                     Some(Command::DhtBootstrap) => {
-                        if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
-                            tracing::warn!(%e, "dht bootstrap failed");
+                        if let Some(kad) = swarm.behaviour_mut().kademlia.as_mut() {
+                            if let Err(e) = kad.bootstrap() {
+                                tracing::warn!(%e, "dht bootstrap failed");
+                            }
+                        } else {
+                            tracing::warn!("DHT not enabled — ignoring dht_bootstrap");
                         }
                     }
 
@@ -351,7 +466,7 @@ async fn swarm_loop(
                     }
                     Some(Command::RpcSendResponse { channel_id, data }) => {
                         match pending_responses.remove(&channel_id) {
-                            Some(channel) => {
+                            Some((channel, _created)) => {
                                 if let Err(resp) = swarm.behaviour_mut()
                                     .request_response.send_response(channel, data)
                                 {
@@ -380,42 +495,42 @@ async fn swarm_loop(
 
                     // ── Rendezvous ─────────────────────────────
                     Some(Command::RendezvousRegister { namespace, ttl, rendezvous_peer }) => {
-                        let ns = match rendezvous::Namespace::new(namespace.clone()) {
-                            Ok(ns) => ns,
-                            Err(e) => {
-                                tracing::warn!(%namespace, %e, "invalid rendezvous namespace");
-                                continue;
+                        if let Some(rv) = swarm.behaviour_mut().rendezvous_client.as_mut() {
+                            let ns = match rendezvous::Namespace::new(namespace.clone()) {
+                                Ok(ns) => ns,
+                                Err(e) => {
+                                    tracing::warn!(%namespace, %e, "invalid rendezvous namespace");
+                                    continue;
+                                }
+                            };
+                            if let Err(e) = rv.register(ns, rendezvous_peer, Some(ttl)) {
+                                tracing::warn!(%namespace, %e, "rendezvous register failed");
                             }
-                        };
-                        if let Err(e) = swarm.behaviour_mut().rendezvous_client.register(
-                            ns,
-                            rendezvous_peer,
-                            Some(ttl),
-                        ) {
-                            tracing::warn!(%namespace, %e, "rendezvous register failed");
+                        } else {
+                            tracing::warn!("rendezvous client not enabled");
                         }
                     }
                     Some(Command::RendezvousDiscover { namespace, rendezvous_peer }) => {
-                        let ns = rendezvous::Namespace::new(namespace.clone()).ok();
-                        swarm.behaviour_mut().rendezvous_client.discover(
-                            ns,
-                            None, // cookie — None for first discovery
-                            None, // limit
-                            rendezvous_peer,
-                        );
+                        if let Some(rv) = swarm.behaviour_mut().rendezvous_client.as_mut() {
+                            let ns = rendezvous::Namespace::new(namespace.clone()).ok();
+                            rv.discover(ns, None, None, rendezvous_peer);
+                        } else {
+                            tracing::warn!("rendezvous client not enabled");
+                        }
                     }
                     Some(Command::RendezvousUnregister { namespace, rendezvous_peer }) => {
-                        let ns = match rendezvous::Namespace::new(namespace.clone()) {
-                            Ok(ns) => ns,
-                            Err(e) => {
-                                tracing::warn!(%namespace, %e, "invalid rendezvous namespace");
-                                continue;
-                            }
-                        };
-                        swarm.behaviour_mut().rendezvous_client.unregister(
-                            ns,
-                            rendezvous_peer,
-                        );
+                        if let Some(rv) = swarm.behaviour_mut().rendezvous_client.as_mut() {
+                            let ns = match rendezvous::Namespace::new(namespace.clone()) {
+                                Ok(ns) => ns,
+                                Err(e) => {
+                                    tracing::warn!(%namespace, %e, "invalid rendezvous namespace");
+                                    continue;
+                                }
+                            };
+                            rv.unregister(ns, rendezvous_peer);
+                        } else {
+                            tracing::warn!("rendezvous client not enabled");
+                        }
                     }
 
                     Some(Command::Shutdown) | None => break,
@@ -440,7 +555,7 @@ async fn swarm_loop(
                     )) => {
                         channel_counter += 1;
                         let channel_id = format!("ch-{channel_counter}");
-                        pending_responses.insert(channel_id.clone(), channel);
+                        pending_responses.insert(channel_id.clone(), (channel, Instant::now()));
 
                         if let Some(ref pid) = event_handler {
                             crate::events::send_inbound_request(

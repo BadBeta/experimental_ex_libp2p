@@ -40,11 +40,33 @@ pub struct NodeConfig {
     pub relay_max_circuits: u32,
     pub relay_max_circuit_duration_secs: u64,
     pub relay_max_circuit_bytes: u64,
+    // Peer scoring (parsed from nested Elixir maps)
+    pub peer_score: Option<PeerScoreConfig>,
+    pub thresholds: Option<ThresholdsConfig>,
+}
+
+/// GossipSub peer scoring parameters (maps to libp2p::gossipsub::PeerScoreParams).
+#[allow(dead_code)]
+pub struct PeerScoreConfig {
+    pub ip_colocation_factor_weight: f64,
+    pub ip_colocation_factor_threshold: f64,
+    pub behaviour_penalty_weight: f64,
+    pub behaviour_penalty_decay: f64,
+}
+
+/// GossipSub score thresholds (maps to libp2p::gossipsub::PeerScoreThresholds).
+#[allow(dead_code)]
+pub struct ThresholdsConfig {
+    pub gossip_threshold: f64,
+    pub publish_threshold: f64,
+    pub graylist_threshold: f64,
+    pub accept_px_threshold: f64,
+    pub opportunistic_graft_threshold: f64,
 }
 
 impl NodeConfig {
-    pub fn from_map(
-        map: &std::collections::HashMap<String, rustler::Term>,
+    pub fn from_map<'a>(
+        map: &std::collections::HashMap<String, rustler::Term<'a>>,
     ) -> Result<Self, String> {
         Ok(Self {
             keypair_bytes: get_binary(map, "keypair_bytes"),
@@ -78,6 +100,8 @@ impl NodeConfig {
             relay_max_circuits: get_u32(map, "relay_max_circuits", 16),
             relay_max_circuit_duration_secs: get_u64(map, "relay_max_circuit_duration_secs", 120),
             relay_max_circuit_bytes: get_u64(map, "relay_max_circuit_bytes", 131072),
+            peer_score: get_peer_score(map),
+            thresholds: get_thresholds(map),
         })
     }
 }
@@ -157,4 +181,43 @@ fn get_usize(
         .and_then(|t| t.decode::<u64>().ok())
         .map(|v| v as usize)
         .unwrap_or(default)
+}
+
+fn get_f64(
+    map: &std::collections::HashMap<String, rustler::Term>,
+    key: &str,
+    default: f64,
+) -> f64 {
+    map.get(key)
+        .and_then(|t| t.decode::<f64>().ok())
+        .unwrap_or(default)
+}
+
+fn get_peer_score<'a>(
+    map: &std::collections::HashMap<String, rustler::Term<'a>>,
+) -> Option<PeerScoreConfig> {
+    let term = map.get("gossipsub_peer_score")?;
+    if term.is_atom() { return None; }
+    let inner: std::collections::HashMap<String, rustler::Term> = term.decode().ok()?;
+    Some(PeerScoreConfig {
+        ip_colocation_factor_weight: get_f64(&inner, "ip_colocation_factor_weight", -53.0),
+        ip_colocation_factor_threshold: get_f64(&inner, "ip_colocation_factor_threshold", 3.0),
+        behaviour_penalty_weight: get_f64(&inner, "behaviour_penalty_weight", -15.92),
+        behaviour_penalty_decay: get_f64(&inner, "behaviour_penalty_decay", 0.986),
+    })
+}
+
+fn get_thresholds<'a>(
+    map: &std::collections::HashMap<String, rustler::Term<'a>>,
+) -> Option<ThresholdsConfig> {
+    let term = map.get("gossipsub_thresholds")?;
+    if term.is_atom() { return None; }
+    let inner: std::collections::HashMap<String, rustler::Term> = term.decode().ok()?;
+    Some(ThresholdsConfig {
+        gossip_threshold: get_f64(&inner, "gossip_threshold", -4000.0),
+        publish_threshold: get_f64(&inner, "publish_threshold", -8000.0),
+        graylist_threshold: get_f64(&inner, "graylist_threshold", -16000.0),
+        accept_px_threshold: get_f64(&inner, "accept_px_threshold", 100.0),
+        opportunistic_graft_threshold: get_f64(&inner, "opportunistic_graft_threshold", 5.0),
+    })
 }

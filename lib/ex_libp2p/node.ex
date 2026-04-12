@@ -57,6 +57,17 @@ defmodule ExLibp2p.Node do
     GenServer.start_link(__MODULE__, node_opts, gen_opts)
   end
 
+  @doc """
+  Starts a node under the `ExLibp2p.NodeSupervisor` DynamicSupervisor.
+
+  The node will be restarted automatically if it crashes. Options are
+  the same as `start_link/1`.
+  """
+  @spec start_supervised(keyword()) :: DynamicSupervisor.on_start_child()
+  def start_supervised(opts \\ []) do
+    DynamicSupervisor.start_child(ExLibp2p.NodeSupervisor, {__MODULE__, opts})
+  end
+
   @doc "Returns the node's peer ID."
   @spec peer_id(GenServer.server()) :: {:ok, PeerId.t()} | {:error, term()}
   def peer_id(node), do: GenServer.call(node, :peer_id)
@@ -411,6 +422,12 @@ defmodule ExLibp2p.Node do
   defp event_type_for(%Event.DialFailure{}), do: :dial_failure
 
   defp stringify_keys(map) do
-    Map.new(map, fn {k, v} -> {to_string(k), v} end)
+    Map.new(map, fn {k, v} -> {to_string(k), normalize_value(v)} end)
   end
+
+  defp normalize_value(%{__struct__: _} = struct) do
+    struct |> Map.from_struct() |> stringify_keys()
+  end
+
+  defp normalize_value(value), do: value
 end
