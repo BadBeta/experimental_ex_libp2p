@@ -28,6 +28,8 @@ defmodule ExLibp2p.RequestResponse do
 
   alias ExLibp2p.{Node, PeerId}
 
+  import ExLibp2p.Call, only: [safe_call: 2]
+
   @doc """
   Sends a request to a peer. Returns `{:ok, request_id}` for correlation.
 
@@ -36,7 +38,7 @@ defmodule ExLibp2p.RequestResponse do
   @spec send_request(GenServer.server(), PeerId.t(), binary()) ::
           {:ok, String.t()} | {:error, term()}
   def send_request(node, %PeerId{id: peer_id_str}, data) when is_binary(data) do
-    GenServer.call(node, {:rpc_send_request, peer_id_str, data})
+    safe_call(node, {:rpc_send_request, peer_id_str, data})
   end
 
   @doc """
@@ -46,7 +48,7 @@ defmodule ExLibp2p.RequestResponse do
   """
   @spec send_response(GenServer.server(), String.t(), binary()) :: :ok | {:error, term()}
   def send_response(node, channel_id, data) when is_binary(channel_id) and is_binary(data) do
-    GenServer.call(node, {:rpc_send_response, channel_id, data})
+    safe_call(node, {:rpc_send_response, channel_id, data})
   end
 
   @doc """

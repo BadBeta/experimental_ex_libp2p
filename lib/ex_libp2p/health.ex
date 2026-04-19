@@ -16,7 +16,7 @@ defmodule ExLibp2p.Health do
   use GenServer
   require Logger
 
-  import ExLibp2p.Call, only: [safe_call: 3]
+  import ExLibp2p.Call, only: [safe_call: 2, safe_call: 3]
 
   @default_interval 30_000
   @check_timeout 10_000
@@ -29,7 +29,7 @@ defmodule ExLibp2p.Health do
 
   @doc "Returns the current health status."
   @spec check(GenServer.server()) :: {:ok, map()} | {:error, term()}
-  def check(health), do: GenServer.call(health, :check)
+  def check(health), do: safe_call(health, :check)
 
   @impl true
   def init(opts) do
