@@ -70,7 +70,7 @@ defmodule ExLibp2p.PeerId do
   end
 
   defimpl Inspect do
-    import Inspect.Algebra
+    import Inspect.Algebra, only: [concat: 1]
 
     def inspect(%ExLibp2p.PeerId{id: id}, _opts) do
       abbrev = String.slice(id, 0, 8) <> "..." <> String.slice(id, -4, 4)

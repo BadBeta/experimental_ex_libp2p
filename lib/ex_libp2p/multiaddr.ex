@@ -93,7 +93,7 @@ defmodule ExLibp2p.Multiaddr do
   end
 
   defimpl Inspect do
-    import Inspect.Algebra
+    import Inspect.Algebra, only: [concat: 1]
 
     def inspect(%ExLibp2p.Multiaddr{address: address}, _opts) do
       concat(["#Multiaddr<", address, ">"])

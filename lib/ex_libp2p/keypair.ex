@@ -21,6 +21,8 @@ defmodule ExLibp2p.Keypair do
 
   """
 
+  @default_native Application.compile_env(:ex_libp2p, :native_module, ExLibp2p.Native.Nif)
+
   @enforce_keys [:public_key, :peer_id]
   defstruct [:public_key, :peer_id, :protobuf_bytes]
 
@@ -86,18 +88,34 @@ defmodule ExLibp2p.Keypair do
   @doc """
   Saves a keypair to a file with restrictive permissions (0o600).
 
+  Returns `:ok` or `{:error, reason}`.
+  """
+  @spec save(t(), Path.t()) :: :ok | {:error, term()}
+  def save(%__MODULE__{protobuf_bytes: bytes}, path) when is_binary(bytes) do
+    tmp_path = path <> ".tmp"
+
+    with :ok <- File.write(tmp_path, bytes),
+         :ok <- File.chmod(tmp_path, 0o600),
+         :ok <- File.rename(tmp_path, path) do
+      :ok
+    else
+      {:error, reason} ->
+        File.rm(tmp_path)
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Saves a keypair to a file with restrictive permissions (0o600).
+
   Raises on file write errors.
   """
   @spec save!(t(), Path.t()) :: :ok
-  def save!(%__MODULE__{protobuf_bytes: bytes}, path) when is_binary(bytes) do
-    # Atomic write: write to temp file, set permissions, then rename.
-    # This prevents a crash between write and chmod from leaving the key
-    # world-readable, and prevents partial reads from concurrent processes.
-    tmp_path = path <> ".tmp"
-    File.write!(tmp_path, bytes)
-    File.chmod!(tmp_path, 0o600)
-    File.rename!(tmp_path, path)
-    :ok
+  def save!(%__MODULE__{} = keypair, path) do
+    case save(keypair, path) do
+      :ok -> :ok
+      {:error, reason} -> raise "Failed to save keypair to #{path}: #{inspect(reason)}"
+    end
   end
 
   @doc """
@@ -127,7 +145,5 @@ defmodule ExLibp2p.Keypair do
     end
   end
 
-  defp native_module do
-    Application.get_env(:ex_libp2p, :native_module, ExLibp2p.Native.Nif)
-  end
+  defp native_module, do: @default_native
 end

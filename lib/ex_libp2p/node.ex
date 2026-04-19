@@ -89,28 +89,56 @@ defmodule ExLibp2p.Node do
   """
   @spec dial(GenServer.server(), String.t()) :: :ok | {:error, term()}
   def dial(node, addr) when is_binary(addr) do
-    case Multiaddr.new(addr) do
-      {:ok, _} -> safe_call(node, {:dial, addr})
-      {:error, _} -> {:error, :invalid_multiaddr}
-    end
+    :telemetry.span([:ex_libp2p, :node, :dial], %{addr: addr}, fn ->
+      result =
+        case Multiaddr.new(addr) do
+          {:ok, _} -> safe_call(node, {:dial, addr})
+          {:error, _} -> {:error, :invalid_multiaddr}
+        end
+
+      {result, %{result: result_tag(result)}}
+    end)
   end
 
   @doc "Publishes binary data to a GossipSub topic."
   @spec publish(GenServer.server(), String.t(), binary()) :: :ok | {:error, term()}
   def publish(node, topic, data) when is_binary(topic) and is_binary(data) do
-    safe_call(node, {:publish, topic, data})
+    :telemetry.span(
+      [:ex_libp2p, :node, :publish],
+      %{topic: topic, size: byte_size(data)},
+      fn ->
+        result = safe_call(node, {:publish, topic, data})
+        {result, %{result: result_tag(result)}}
+      end
+    )
   end
 
   @doc "Subscribes to a GossipSub topic."
   @spec subscribe(GenServer.server(), String.t()) :: :ok | {:error, term()}
   def subscribe(node, topic) when is_binary(topic) do
-    safe_call(node, {:subscribe, topic})
+    result = safe_call(node, {:subscribe, topic})
+
+    :telemetry.execute(
+      [:ex_libp2p, :node, :subscribe],
+      %{count: 1},
+      %{topic: topic, result: result_tag(result)}
+    )
+
+    result
   end
 
   @doc "Unsubscribes from a GossipSub topic."
   @spec unsubscribe(GenServer.server(), String.t()) :: :ok | {:error, term()}
   def unsubscribe(node, topic) when is_binary(topic) do
-    safe_call(node, {:unsubscribe, topic})
+    result = safe_call(node, {:unsubscribe, topic})
+
+    :telemetry.execute(
+      [:ex_libp2p, :node, :unsubscribe],
+      %{count: 1},
+      %{topic: topic, result: result_tag(result)}
+    )
+
+    result
   end
 
   @doc """
@@ -422,6 +450,11 @@ defmodule ExLibp2p.Node do
   defp event_type_for(%Event.HolePunchOutcome{}), do: :hole_punch_outcome
   defp event_type_for(%Event.ExternalAddrConfirmed{}), do: :external_addr_confirmed
   defp event_type_for(%Event.DialFailure{}), do: :dial_failure
+
+  defp result_tag(:ok), do: :ok
+  defp result_tag({:ok, _}), do: :ok
+  defp result_tag({:error, _}), do: :error
+  defp result_tag(_), do: :unknown
 
   defp stringify_keys(map) do
     Map.new(map, fn {k, v} -> {to_string(k), normalize_value(v)} end)
