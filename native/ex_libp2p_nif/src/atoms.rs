@@ -1,6 +1,7 @@
 rustler::atoms! {
     ok,
     error,
+    nil,
     node_stopped,
     invalid_peer_id,
     invalid_multiaddr,

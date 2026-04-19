@@ -32,6 +32,8 @@ defmodule ExLibp2p.Relay do
 
   alias ExLibp2p.Node
 
+  import ExLibp2p.Call, only: [safe_call: 2]
+
   @doc """
   Listens through a relay node for inbound connections.
 
@@ -39,7 +41,7 @@ defmodule ExLibp2p.Relay do
   """
   @spec listen_via_relay(GenServer.server(), String.t()) :: :ok | {:error, term()}
   def listen_via_relay(node, relay_addr) when is_binary(relay_addr) do
-    GenServer.call(node, {:listen_via_relay, relay_addr})
+    safe_call(node, {:listen_via_relay, relay_addr})
   end
 
   @doc """

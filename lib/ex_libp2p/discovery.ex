@@ -20,6 +20,8 @@ defmodule ExLibp2p.Discovery do
 
   alias ExLibp2p.Node
 
+  import ExLibp2p.Call, only: [safe_call: 2]
+
   @doc """
   Registers the calling process to receive peer discovery events.
 
@@ -43,7 +45,7 @@ defmodule ExLibp2p.Discovery do
   def bootstrap(node, peer_addrs) when is_list(peer_addrs) do
     dial_results = Enum.map(peer_addrs, &Node.dial(node, &1))
 
-    with :ok <- GenServer.call(node, :dht_bootstrap) do
+    with :ok <- safe_call(node, :dht_bootstrap) do
       {:ok, dial_results}
     end
   end

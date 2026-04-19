@@ -261,12 +261,15 @@ pub fn handle_swarm_event(event: SwarmEvent<NodeBehaviourEvent>, pid: &LocalPid)
                 })
                 .collect();
 
-            if encoded_peers.is_empty() {
-                atoms::libp2p_noop().encode(env)
-            } else if encoded_peers.len() == 1 {
-                (atoms::libp2p_event(), encoded_peers.into_iter().next().unwrap()).encode(env)
-            } else {
-                (atoms::libp2p_event(), (atoms::peers_discovered(), encoded_peers)).encode(env)
+            match encoded_peers.len() {
+                0 => atoms::libp2p_noop().encode(env),
+                1 => {
+                    // Safe: we just checked len() == 1
+                    let peer = encoded_peers.into_iter().next()
+                        .unwrap_or_else(|| atoms::nil().encode(env));
+                    (atoms::libp2p_event(), peer).encode(env)
+                }
+                _ => (atoms::libp2p_event(), (atoms::peers_discovered(), encoded_peers)).encode(env),
             }
         }
 
@@ -419,9 +422,12 @@ fn encode_binary<'a>(env: Env<'a>, data: &[u8]) -> Term<'a> {
                 "failed to allocate {} byte binary — memory pressure",
                 data.len()
             );
-            // Return empty binary instead of crashing
-            let empty = rustler::OwnedBinary::new(0).unwrap();
-            empty.release(env).encode(env)
+            // Return empty binary instead of crashing.
+            // If even 0-byte allocation fails, return nil atom — never panic in a NIF.
+            match rustler::OwnedBinary::new(0) {
+                Some(empty) => empty.release(env).encode(env),
+                None => atoms::nil().encode(env),
+            }
         }
     }
 }

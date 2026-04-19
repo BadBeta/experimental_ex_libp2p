@@ -16,6 +16,8 @@ defmodule ExLibp2p.Health do
   use GenServer
   require Logger
 
+  import ExLibp2p.Call, only: [safe_call: 3]
+
   @default_interval 30_000
   @check_timeout 10_000
 
@@ -77,9 +79,9 @@ defmodule ExLibp2p.Health do
   end
 
   defp collect_status(node) do
-    with {:ok, peer_id} <- safe_call(node, :peer_id),
-         {:ok, peers} <- safe_call(node, :connected_peers),
-         {:ok, addrs} <- safe_call(node, :listening_addrs) do
+    with {:ok, peer_id} <- safe_call(node, :peer_id, @check_timeout),
+         {:ok, peers} <- safe_call(node, :connected_peers, @check_timeout),
+         {:ok, addrs} <- safe_call(node, :listening_addrs, @check_timeout) do
       {:ok,
        %{
          peer_id: peer_id,
@@ -87,12 +89,6 @@ defmodule ExLibp2p.Health do
          listening_addrs: addrs
        }}
     end
-  end
-
-  defp safe_call(node, msg) do
-    GenServer.call(node, msg, @check_timeout)
-  catch
-    :exit, reason -> {:error, {:node_unavailable, reason}}
   end
 
   defp schedule_check(interval) do

@@ -34,6 +34,8 @@ defmodule ExLibp2p.Node do
   alias ExLibp2p.Node.Event
   alias ExLibp2p.PeerId
 
+  import ExLibp2p.Call, only: [safe_call: 2]
+
   @default_native Application.compile_env(:ex_libp2p, :native_module, ExLibp2p.Native.Nif)
 
   # event_handlers: %{event_type => [{pid, monitor_ref}]}
@@ -70,15 +72,15 @@ defmodule ExLibp2p.Node do
 
   @doc "Returns the node's peer ID."
   @spec peer_id(GenServer.server()) :: {:ok, PeerId.t()} | {:error, term()}
-  def peer_id(node), do: GenServer.call(node, :peer_id)
+  def peer_id(node), do: safe_call(node, :peer_id)
 
   @doc "Returns the list of currently connected peers."
   @spec connected_peers(GenServer.server()) :: {:ok, [PeerId.t()]} | {:error, term()}
-  def connected_peers(node), do: GenServer.call(node, :connected_peers)
+  def connected_peers(node), do: safe_call(node, :connected_peers)
 
   @doc "Returns the addresses this node is listening on."
   @spec listening_addrs(GenServer.server()) :: {:ok, [String.t()]} | {:error, term()}
-  def listening_addrs(node), do: GenServer.call(node, :listening_addrs)
+  def listening_addrs(node), do: safe_call(node, :listening_addrs)
 
   @doc """
   Dials a peer at the given multiaddr.
@@ -88,7 +90,7 @@ defmodule ExLibp2p.Node do
   @spec dial(GenServer.server(), String.t()) :: :ok | {:error, term()}
   def dial(node, addr) when is_binary(addr) do
     case Multiaddr.new(addr) do
-      {:ok, _} -> GenServer.call(node, {:dial, addr})
+      {:ok, _} -> safe_call(node, {:dial, addr})
       {:error, _} -> {:error, :invalid_multiaddr}
     end
   end
@@ -96,19 +98,19 @@ defmodule ExLibp2p.Node do
   @doc "Publishes binary data to a GossipSub topic."
   @spec publish(GenServer.server(), String.t(), binary()) :: :ok | {:error, term()}
   def publish(node, topic, data) when is_binary(topic) and is_binary(data) do
-    GenServer.call(node, {:publish, topic, data})
+    safe_call(node, {:publish, topic, data})
   end
 
   @doc "Subscribes to a GossipSub topic."
   @spec subscribe(GenServer.server(), String.t()) :: :ok | {:error, term()}
   def subscribe(node, topic) when is_binary(topic) do
-    GenServer.call(node, {:subscribe, topic})
+    safe_call(node, {:subscribe, topic})
   end
 
   @doc "Unsubscribes from a GossipSub topic."
   @spec unsubscribe(GenServer.server(), String.t()) :: :ok | {:error, term()}
   def unsubscribe(node, topic) when is_binary(topic) do
-    GenServer.call(node, {:unsubscribe, topic})
+    safe_call(node, {:unsubscribe, topic})
   end
 
   @doc """
@@ -120,15 +122,15 @@ defmodule ExLibp2p.Node do
   Event types: `:connection_established`, `:connection_closed`, `:new_listen_addr`,
   `:gossipsub_message`, `:peer_discovered`, `:dht_query_result`
   """
-  @spec register_handler(GenServer.server(), atom(), pid()) :: :ok
+  @spec register_handler(GenServer.server(), atom(), pid()) :: :ok | {:error, term()}
   def register_handler(node, event_type, pid \\ self()) do
-    GenServer.call(node, {:register_handler, event_type, pid})
+    safe_call(node, {:register_handler, event_type, pid})
   end
 
   @doc "Unregisters the calling process from receiving events of the given type."
-  @spec unregister_handler(GenServer.server(), atom(), pid()) :: :ok
+  @spec unregister_handler(GenServer.server(), atom(), pid()) :: :ok | {:error, term()}
   def unregister_handler(node, event_type, pid \\ self()) do
-    GenServer.call(node, {:unregister_handler, event_type, pid})
+    safe_call(node, {:unregister_handler, event_type, pid})
   end
 
   @doc "Stops the node gracefully."
@@ -141,21 +143,21 @@ defmodule ExLibp2p.Node do
   @spec gossipsub_mesh_peers(GenServer.server(), String.t()) ::
           {:ok, [String.t()]} | {:error, term()}
   def gossipsub_mesh_peers(node, topic),
-    do: GenServer.call(node, {:gossipsub_mesh_peers, topic})
+    do: safe_call(node, {:gossipsub_mesh_peers, topic})
 
   @doc false
   @spec gossipsub_all_peers(GenServer.server()) :: {:ok, [String.t()]} | {:error, term()}
-  def gossipsub_all_peers(node), do: GenServer.call(node, :gossipsub_all_peers)
+  def gossipsub_all_peers(node), do: safe_call(node, :gossipsub_all_peers)
 
   @doc false
   @spec gossipsub_peer_score(GenServer.server(), String.t()) :: {:ok, float()} | {:error, term()}
   def gossipsub_peer_score(node, peer_id_str),
-    do: GenServer.call(node, {:gossipsub_peer_score, peer_id_str})
+    do: safe_call(node, {:gossipsub_peer_score, peer_id_str})
 
   @doc false
   @spec bandwidth_stats(GenServer.server()) ::
           {:ok, non_neg_integer(), non_neg_integer()} | {:error, term()}
-  def bandwidth_stats(node), do: GenServer.call(node, :bandwidth_stats)
+  def bandwidth_stats(node), do: safe_call(node, :bandwidth_stats)
 
   # --- Server Callbacks ---
 

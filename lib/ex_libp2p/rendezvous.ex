@@ -32,6 +32,8 @@ defmodule ExLibp2p.Rendezvous do
 
   alias ExLibp2p.{Node, PeerId}
 
+  import ExLibp2p.Call, only: [safe_call: 2]
+
   @doc """
   Registers this node under a namespace at the given rendezvous server.
 
@@ -42,7 +44,7 @@ defmodule ExLibp2p.Rendezvous do
           :ok | {:error, term()}
   def register(node, namespace, %PeerId{id: peer_str}, ttl_secs \\ 3600)
       when is_binary(namespace) do
-    GenServer.call(node, {:rendezvous_register, namespace, ttl_secs, peer_str})
+    safe_call(node, {:rendezvous_register, namespace, ttl_secs, peer_str})
   end
 
   @doc """
@@ -52,13 +54,13 @@ defmodule ExLibp2p.Rendezvous do
   """
   @spec discover(GenServer.server(), String.t(), PeerId.t()) :: :ok | {:error, term()}
   def discover(node, namespace, %PeerId{id: peer_str}) when is_binary(namespace) do
-    GenServer.call(node, {:rendezvous_discover, namespace, peer_str})
+    safe_call(node, {:rendezvous_discover, namespace, peer_str})
   end
 
   @doc "Unregisters this node from a namespace at the given rendezvous server."
   @spec unregister(GenServer.server(), String.t(), PeerId.t()) :: :ok | {:error, term()}
   def unregister(node, namespace, %PeerId{id: peer_str}) when is_binary(namespace) do
-    GenServer.call(node, {:rendezvous_unregister, namespace, peer_str})
+    safe_call(node, {:rendezvous_unregister, namespace, peer_str})
   end
 
   @doc "Registers the calling process to receive peer discovery events from rendezvous."

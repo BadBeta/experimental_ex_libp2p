@@ -21,15 +21,24 @@ use tokio::sync::mpsc;
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
-fn get_runtime() -> &'static Runtime {
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .thread_name("libp2p-tokio")
-            .build()
-            .expect("Failed to create tokio runtime")
-    })
+fn get_runtime() -> Result<&'static Runtime, String> {
+    // Try to get an already-initialized runtime first
+    if let Some(rt) = RUNTIME.get() {
+        return Ok(rt);
+    }
+
+    // Initialize — build can fail if OS resources are exhausted
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .thread_name("libp2p-tokio")
+        .build()
+        .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
+
+    // OnceLock::set returns Err(value) if already set by another thread — that's fine,
+    // just use the one that won the race
+    let _ = RUNTIME.set(rt);
+    RUNTIME.get().ok_or_else(|| "Tokio runtime initialization race failed".to_string())
 }
 
 /// Handle stored in ResourceArc — holds only the command channel sender.
@@ -56,7 +65,7 @@ pub fn start_node_inner(
     config_map: HashMap<String, rustler::Term>,
 ) -> Result<ResourceArc<NodeHandle>, String> {
     let config = crate::config::NodeConfig::from_map(&config_map)?;
-    let runtime = get_runtime();
+    let runtime = get_runtime()?;
 
     // Enter the tokio runtime context — required by SwarmBuilder::with_tokio(),
     // mDNS (netlink sockets), and QUIC (quinn).

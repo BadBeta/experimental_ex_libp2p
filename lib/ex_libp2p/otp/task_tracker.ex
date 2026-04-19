@@ -44,6 +44,8 @@ defmodule ExLibp2p.OTP.TaskTracker do
   alias ExLibp2p.{Node, PeerId}
   alias ExLibp2p.Node.Event
 
+  import ExLibp2p.Call, only: [safe_call: 2]
+
   defmodule Task do
     @moduledoc "A tracked remote task."
     @enforce_keys [:id, :peer_id, :target, :message]
@@ -75,32 +77,32 @@ defmodule ExLibp2p.OTP.TaskTracker do
   Does NOT send the actual message — the caller is responsible for
   dispatching via `ExLibp2p.OTP.Distribution.call/5` or similar.
   """
-  @spec dispatch(GenServer.server(), PeerId.t(), atom(), term()) :: {:ok, String.t()}
+  @spec dispatch(GenServer.server(), PeerId.t(), atom(), term()) :: {:ok, String.t()} | {:error, term()}
   def dispatch(tracker, %PeerId{} = peer_id, target, message) when is_atom(target) do
-    GenServer.call(tracker, {:dispatch, peer_id, target, message})
+    safe_call(tracker, {:dispatch, peer_id, target, message})
   end
 
   @doc "Marks a task as completed."
-  @spec complete(GenServer.server(), String.t()) :: :ok | {:error, :not_found}
-  def complete(tracker, task_id), do: GenServer.call(tracker, {:complete, task_id})
+  @spec complete(GenServer.server(), String.t()) :: :ok | {:error, term()}
+  def complete(tracker, task_id), do: safe_call(tracker, {:complete, task_id})
 
   @doc "Marks a task as failed with the given reason."
-  @spec fail(GenServer.server(), String.t(), term()) :: :ok | {:error, :not_found}
-  def fail(tracker, task_id, reason), do: GenServer.call(tracker, {:fail, task_id, reason})
+  @spec fail(GenServer.server(), String.t(), term()) :: :ok | {:error, term()}
+  def fail(tracker, task_id, reason), do: safe_call(tracker, {:fail, task_id, reason})
 
   @doc "Returns a tracked task by ID."
-  @spec get(GenServer.server(), String.t()) :: {:ok, Task.t()} | {:error, :not_found}
-  def get(tracker, task_id), do: GenServer.call(tracker, {:get, task_id})
+  @spec get(GenServer.server(), String.t()) :: {:ok, Task.t()} | {:error, term()}
+  def get(tracker, task_id), do: safe_call(tracker, {:get, task_id})
 
   @doc "Returns all pending tasks for a specific peer."
-  @spec pending_for_peer(GenServer.server(), PeerId.t()) :: [Task.t()]
+  @spec pending_for_peer(GenServer.server(), PeerId.t()) :: [Task.t()] | {:error, term()}
   def pending_for_peer(tracker, %PeerId{} = peer_id) do
-    GenServer.call(tracker, {:pending_for_peer, peer_id})
+    safe_call(tracker, {:pending_for_peer, peer_id})
   end
 
   @doc "Returns all pending tasks across all peers."
-  @spec all_pending(GenServer.server()) :: [Task.t()]
-  def all_pending(tracker), do: GenServer.call(tracker, :all_pending)
+  @spec all_pending(GenServer.server()) :: [Task.t()] | {:error, term()}
+  def all_pending(tracker), do: safe_call(tracker, :all_pending)
 
   @doc """
   Subscribes the calling process to peer-loss notifications.
@@ -108,12 +110,12 @@ defmodule ExLibp2p.OTP.TaskTracker do
   When a peer with pending tasks disconnects, subscribers receive:
   `{:task_tracker, :peer_lost, peer_id, orphaned_tasks}`
   """
-  @spec subscribe(GenServer.server()) :: :ok
-  def subscribe(tracker), do: GenServer.call(tracker, {:subscribe, self()})
+  @spec subscribe(GenServer.server()) :: :ok | {:error, term()}
+  def subscribe(tracker), do: safe_call(tracker, {:subscribe, self()})
 
   @doc "Removes completed and failed tasks. Returns the number removed."
-  @spec cleanup(GenServer.server()) :: non_neg_integer()
-  def cleanup(tracker), do: GenServer.call(tracker, :cleanup)
+  @spec cleanup(GenServer.server()) :: non_neg_integer() | {:error, term()}
+  def cleanup(tracker), do: safe_call(tracker, :cleanup)
 
   # --- Server ---
 
