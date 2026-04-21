@@ -64,21 +64,17 @@ defmodule ExLibp2p.NodeTest do
     end
   end
 
-  describe "publish/3" do
+  describe "publish/subscribe (via Gossipsub)" do
     test "publishes data to a topic", %{node: node} do
-      assert :ok = Node.publish(node, "test-topic", "hello")
+      assert :ok = ExLibp2p.Gossipsub.publish(node, "test-topic", "hello")
     end
-  end
 
-  describe "subscribe/2" do
     test "subscribes to a topic", %{node: node} do
-      assert :ok = Node.subscribe(node, "test-topic")
+      assert :ok = ExLibp2p.Gossipsub.subscribe(node, "test-topic")
     end
-  end
 
-  describe "unsubscribe/2" do
     test "unsubscribes from a topic", %{node: node} do
-      assert :ok = Node.unsubscribe(node, "test-topic")
+      assert :ok = ExLibp2p.Gossipsub.unsubscribe(node, "test-topic")
     end
   end
 

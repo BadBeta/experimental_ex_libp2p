@@ -11,7 +11,7 @@ defmodule ExLibp2p.Metrics do
 
   """
 
-  alias ExLibp2p.Node
+  import ExLibp2p.Call, only: [safe_call: 2]
 
   @doc """
   Returns the total bandwidth consumed by the node.
@@ -20,7 +20,7 @@ defmodule ExLibp2p.Metrics do
   """
   @spec bandwidth(GenServer.server()) :: {:ok, map()} | {:error, term()}
   def bandwidth(node) do
-    case Node.bandwidth_stats(node) do
+    case safe_call(node, :bandwidth_stats) do
       {:ok, bytes_in, bytes_out} -> {:ok, %{bytes_in: bytes_in, bytes_out: bytes_out}}
       {:error, _} = error -> error
     end
