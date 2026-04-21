@@ -52,16 +52,18 @@ defmodule ExLibp2p.Gossipsub do
   @spec mesh_peers(GenServer.server(), String.t()) ::
           {:ok, [PeerId.t()]} | {:error, term()}
   def mesh_peers(node, topic) when is_binary(topic) do
-    with {:ok, peers} <- Node.gossipsub_mesh_peers(node, topic) do
-      {:ok, Enum.map(peers, &PeerId.new!/1)}
+    case Node.gossipsub_mesh_peers(node, topic) do
+      {:ok, peers} -> {:ok, Enum.map(peers, &PeerId.new!/1)}
+      {:error, _} = error -> error
     end
   end
 
   @doc "Returns all known GossipSub peers (mesh + non-mesh)."
   @spec all_peers(GenServer.server()) :: {:ok, [PeerId.t()]} | {:error, term()}
   def all_peers(node) do
-    with {:ok, peers} <- Node.gossipsub_all_peers(node) do
-      {:ok, Enum.map(peers, &PeerId.new!/1)}
+    case Node.gossipsub_all_peers(node) do
+      {:ok, peers} -> {:ok, Enum.map(peers, &PeerId.new!/1)}
+      {:error, _} = error -> error
     end
   end
 

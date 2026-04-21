@@ -20,8 +20,9 @@ defmodule ExLibp2p.Metrics do
   """
   @spec bandwidth(GenServer.server()) :: {:ok, map()} | {:error, term()}
   def bandwidth(node) do
-    with {:ok, bytes_in, bytes_out} <- Node.bandwidth_stats(node) do
-      {:ok, %{bytes_in: bytes_in, bytes_out: bytes_out}}
+    case Node.bandwidth_stats(node) do
+      {:ok, bytes_in, bytes_out} -> {:ok, %{bytes_in: bytes_in, bytes_out: bytes_out}}
+      {:error, _} = error -> error
     end
   end
 end

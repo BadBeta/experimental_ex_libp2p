@@ -45,8 +45,9 @@ defmodule ExLibp2p.Discovery do
   def bootstrap(node, peer_addrs) when is_list(peer_addrs) do
     dial_results = Enum.map(peer_addrs, &Node.dial(node, &1))
 
-    with :ok <- safe_call(node, :dht_bootstrap) do
-      {:ok, dial_results}
+    case safe_call(node, :dht_bootstrap) do
+      :ok -> {:ok, dial_results}
+      {:error, _} = error -> error
     end
   end
 end
