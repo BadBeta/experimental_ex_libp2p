@@ -92,4 +92,18 @@ defmodule ExLibp2p.OTP.DistributionTest do
       assert reply == {:error, :noproc}
     end
   end
+
+  describe "catch-all input safety" do
+    test "decode/1 returns {:error, :invalid_input} for non-binary input" do
+      assert {:error, :invalid_input} = Distribution.decode(:not_a_binary)
+      assert {:error, :invalid_input} = Distribution.decode(42)
+      assert {:error, :invalid_input} = Distribution.decode(%{})
+    end
+
+    test "handle_remote_request/1 returns encoded {:error, :unknown_request} for unknown shape" do
+      {:ok, response} = Distribution.handle_remote_request({:totally_unknown_op, :foo, :bar})
+      {:ok, reply} = Distribution.decode(response)
+      assert reply == {:error, :unknown_request}
+    end
+  end
 end

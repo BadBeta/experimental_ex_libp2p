@@ -13,7 +13,7 @@ use rustler::{Encoder, Env, LocalPid, OwnedEnv, Term};
 /// NOTE: request_response Message events are handled directly in the swarm loop
 /// because we need to extract the ResponseChannel before encoding.
 pub fn handle_swarm_event(event: SwarmEvent<NodeBehaviourEvent>, pid: &LocalPid) {
-    let pid = pid.clone();
+    let pid = *pid;
     let mut owned_env = OwnedEnv::new();
 
     let _ = owned_env.send_and_clear(&pid, |env| match event {
@@ -155,7 +155,7 @@ pub fn handle_swarm_event(event: SwarmEvent<NodeBehaviourEvent>, pid: &LocalPid)
         // Request-response failure events (success events handled in swarm_loop)
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
             libp2p::request_response::Event::OutboundFailure {
-                peer, request_id, error,
+                peer, request_id, error, ..
             },
         )) => (
             atoms::libp2p_event(),
@@ -169,7 +169,7 @@ pub fn handle_swarm_event(event: SwarmEvent<NodeBehaviourEvent>, pid: &LocalPid)
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::RequestResponse(
             libp2p::request_response::Event::InboundFailure {
-                peer, request_id, error,
+                peer, request_id, error, ..
             },
         )) => (
             atoms::libp2p_event(),
@@ -277,6 +277,44 @@ pub fn handle_swarm_event(event: SwarmEvent<NodeBehaviourEvent>, pid: &LocalPid)
     });
 }
 
+/// Send a (possibly batch) mDNS peer-discovery event to Elixir. When the
+/// list has exactly one entry, emits a singular `{:peer_discovered, ...}`;
+/// otherwise emits a `{:peers_discovered, [...]}` batch which the Elixir
+/// side fans out into individual events. This matches the legacy
+/// `handle_swarm_event` shape so existing callers see the same wire
+/// format whether or not the swarm-loop intercepted the discovery.
+pub fn send_peers_discovered(pid: &LocalPid, peers: &[(PeerId, libp2p::Multiaddr)]) {
+    if peers.is_empty() {
+        return;
+    }
+
+    let pid = *pid;
+    let peers_owned: Vec<(String, Vec<String>)> = peers
+        .iter()
+        .map(|(p, a)| (p.to_base58(), vec![a.to_string()]))
+        .collect();
+
+    let mut owned_env = OwnedEnv::new();
+    let _ = owned_env.send_and_clear(&pid, |env| {
+        if peers_owned.len() == 1 {
+            let (peer_id, addrs) = &peers_owned[0];
+            (
+                atoms::libp2p_event(),
+                (atoms::peer_discovered(), peer_id.clone(), addrs.clone()),
+            )
+                .encode(env)
+        } else {
+            let encoded: Vec<Term> = peers_owned
+                .iter()
+                .map(|(p, a)| {
+                    (atoms::peer_discovered(), p.clone(), a.clone()).encode(env)
+                })
+                .collect();
+            (atoms::libp2p_event(), (atoms::peers_discovered(), encoded)).encode(env)
+        }
+    });
+}
+
 /// Send an inbound request event to Elixir.
 /// Called from the swarm loop after extracting the ResponseChannel.
 pub fn send_inbound_request(
@@ -286,7 +324,7 @@ pub fn send_inbound_request(
     channel_id: &str,
     data: &[u8],
 ) {
-    let pid = pid.clone();
+    let pid = *pid;
     let peer_str = peer.to_base58();
     let req_id = request_id.to_string();
     let ch_id = channel_id.to_string();
@@ -316,7 +354,7 @@ pub fn send_outbound_response(
     request_id: &str,
     data: &[u8],
 ) {
-    let pid = pid.clone();
+    let pid = *pid;
     let peer_str = peer.to_base58();
     let req_id = request_id.to_string();
     let data = data.to_vec();

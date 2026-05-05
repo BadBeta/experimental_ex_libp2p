@@ -389,8 +389,19 @@ defmodule ExLibp2p.Integration.SecurityTest do
     ]
 
     for addr <- rust_handled do
+      # Post-R1 (typed NifError + Encoder), the error shape is
+      # `{:error, {:invalid_multiaddr, "msg"}}` — `:invalid_multiaddr` is
+      # the variant atom, the second element is a human-readable detail
+      # string. Pre-R1 callers saw `{:error, :invalid_multiaddr}` (atom
+      # only). Accept both shapes plus the no-error path so this test
+      # measures "doesn't crash" (its stated intent), not error syntax.
       result = Node.dial(node, addr)
-      assert result in [:ok, :error, {:error, :invalid_multiaddr}]
+
+      assert match?(:ok, result) or
+               match?(:error, result) or
+               match?({:error, :invalid_multiaddr}, result) or
+               match?({:error, {:invalid_multiaddr, _}}, result),
+             "unexpected dial result: #{inspect(result)}"
     end
 
     # Node should still be alive after all bad inputs

@@ -32,5 +32,11 @@ defmodule ExLibp2p.DiscoveryTest do
     test "returns ok with empty bootstrap list", %{node: node} do
       assert :ok = Discovery.bootstrap(node, [])
     end
+
+    test "returns {:error, :invalid_peer_addrs} for non-list input", %{node: node} do
+      assert {:error, :invalid_peer_addrs} = Discovery.bootstrap(node, :not_a_list)
+      assert {:error, :invalid_peer_addrs} = Discovery.bootstrap(node, "not a list either")
+      assert {:error, :invalid_peer_addrs} = Discovery.bootstrap(node, %{})
+    end
   end
 end

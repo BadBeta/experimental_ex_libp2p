@@ -20,7 +20,8 @@ defmodule ExLibp2p.Gossipsub do
 
   """
 
-  alias ExLibp2p.PeerId
+  alias ExLibp2p.{Node, PeerId}
+  alias ExLibp2p.Node.Result
 
   import ExLibp2p.Call, only: [safe_call: 2]
 
@@ -32,7 +33,7 @@ defmodule ExLibp2p.Gossipsub do
     :telemetry.execute(
       [:ex_libp2p, :gossipsub, :subscribe],
       %{count: 1},
-      %{topic: topic, result: result_tag(result)}
+      %{topic: topic, result: Result.tag(result)}
     )
 
     result
@@ -46,7 +47,7 @@ defmodule ExLibp2p.Gossipsub do
     :telemetry.execute(
       [:ex_libp2p, :gossipsub, :unsubscribe],
       %{count: 1},
-      %{topic: topic, result: result_tag(result)}
+      %{topic: topic, result: Result.tag(result)}
     )
 
     result
@@ -65,7 +66,7 @@ defmodule ExLibp2p.Gossipsub do
       %{topic: topic, size: byte_size(data)},
       fn ->
         result = safe_call(node, {:publish, topic, data})
-        {result, %{result: result_tag(result)}}
+        {result, %{result: Result.tag(result)}}
       end
     )
   end
@@ -77,7 +78,7 @@ defmodule ExLibp2p.Gossipsub do
   """
   @spec register_handler(GenServer.server(), pid()) :: :ok
   def register_handler(node, pid \\ self()) do
-    safe_call(node, {:register_handler, :gossipsub_message, pid})
+    Node.register_handler(node, :gossipsub_message, pid)
   end
 
   @doc "Returns the peers in the mesh for a specific topic."
@@ -104,9 +105,4 @@ defmodule ExLibp2p.Gossipsub do
   def peer_score(node, %PeerId{id: peer_id_str}) do
     safe_call(node, {:gossipsub_peer_score, peer_id_str})
   end
-
-  defp result_tag(:ok), do: :ok
-  defp result_tag({:ok, _}), do: :ok
-  defp result_tag({:error, _}), do: :error
-  defp result_tag(_), do: :unknown
 end

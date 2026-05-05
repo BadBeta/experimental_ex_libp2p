@@ -5,5 +5,5 @@ defmodule ExLibp2p.Native.Relay do
 
   @type handle :: reference()
 
-  @callback listen_via_relay(handle(), String.t()) :: :ok | {:error, atom()}
+  @callback listen_via_relay(handle(), String.t()) :: :ok | {:error, term()}
 end

@@ -1,3 +1,4 @@
+use crate::dht_state::RoutingEntry;
 use libp2p::{Multiaddr, PeerId};
 use tokio::sync::oneshot;
 
@@ -64,6 +65,19 @@ pub enum Command {
         key: Vec<u8>,
     },
     DhtBootstrap,
+    /// Walks `kad::Behaviour::kbuckets()` and returns the routing entries.
+    /// Reply is `Ok(entries)` if Kademlia is enabled, `Err(())` otherwise —
+    /// the NIF translates `Err` into `NifError::DhtNotEnabled`.
+    DhtExportRoutingTable {
+        reply: oneshot::Sender<Result<Vec<RoutingEntry>, ()>>,
+    },
+    /// Calls `kad::Behaviour::add_address(peer, addr)` for each entry.
+    /// Reply is the count of (peer, addr) pairs successfully added, or
+    /// `Err(())` if Kademlia is not enabled.
+    DhtImportRoutingTable {
+        entries: Vec<RoutingEntry>,
+        reply: oneshot::Sender<Result<usize, ()>>,
+    },
 
     // --- Request-Response RPC ---
     RpcSendRequest {

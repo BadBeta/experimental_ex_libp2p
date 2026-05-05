@@ -215,4 +215,41 @@ defmodule ExLibp2p.NodeTest do
       refute Process.alive?(node)
     end
   end
+
+  describe "catch-all callback safety" do
+    test "handle_call returns {:error, :unknown_call} for unknown messages", %{node: node} do
+      assert {:error, :unknown_call} = GenServer.call(node, :__deliberately_unknown__)
+      # Node must still be alive — catch-all logged + replied, did not crash
+      assert Process.alive?(node)
+    end
+
+    test "handle_info ignores unknown messages without crashing", %{node: node} do
+      send(node, :__deliberately_unknown_info__)
+      # Round-trip a real call to confirm the node is still healthy
+      assert {:ok, _peer_id} = Node.peer_id(node)
+      assert Process.alive?(node)
+    end
+  end
+
+  describe "format_status/1 — secret redaction" do
+    test "redacts NIF handle; non-sensitive identity fields pass through" do
+      state = %{
+        handle: make_ref(),
+        peer_id: "12D3KooWFakePeerId",
+        native: ExLibp2p.Native.Mock
+      }
+
+      formatted = Node.format_status(%{state: state, queue: []})
+
+      # Sensitive opaque NIF handle is redacted.
+      assert formatted.state.handle == :redacted_handle
+      # Non-sensitive identity field passes through.
+      assert formatted.state.peer_id == "12D3KooWFakePeerId"
+      assert formatted.state.native == ExLibp2p.Native.Mock
+      # Subscriber bookkeeping moved to HandlerRegistry — Node state no longer
+      # carries event_handlers or monitors.
+      refute Map.has_key?(formatted.state, :event_handlers)
+      refute Map.has_key?(formatted.state, :monitors)
+    end
+  end
 end

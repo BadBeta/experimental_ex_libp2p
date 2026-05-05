@@ -2,141 +2,113 @@ defmodule ExLibp2p.Node.Config do
   @moduledoc """
   Configuration for a libp2p node.
 
-  Provides sensible defaults for all settings. Pass overrides as a keyword list
-  to `new/1`. The configuration is validated before being passed to the NIF layer.
+  Settings are organized into seven subgroups (`Identity`, `Network`, `Discovery`,
+  `Gossipsub`, `RequestResponse`, `Relay`, `Rendezvous`) so callers and operators
+  can reason about one concern at a time. The public `new/1` constructor still
+  accepts a flat keyword list — overrides are routed into the matching subgroup.
 
   ## Examples
 
       iex> config = ExLibp2p.Node.Config.new()
-      iex> config.enable_mdns
+      iex> config.discovery.enable_mdns
       true
 
       iex> config = ExLibp2p.Node.Config.new(enable_mdns: false, listen_addrs: ["/ip4/0.0.0.0/tcp/9000"])
-      iex> config.enable_mdns
+      iex> config.discovery.enable_mdns
       false
 
   """
 
-  @enforce_keys []
-  # credo:disable-for-next-line
-  defstruct keypair_bytes: nil,
-            listen_addrs: ["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic-v1"],
-            bootstrap_peers: [],
-            # GossipSub
-            gossipsub_topics: [],
-            gossipsub_mesh_n: 6,
-            gossipsub_mesh_n_low: 4,
-            gossipsub_mesh_n_high: 12,
-            gossipsub_gossip_lazy: 6,
-            gossipsub_max_transmit_size: 65_536,
-            gossipsub_heartbeat_interval_ms: 1000,
-            gossipsub_peer_score: nil,
-            gossipsub_thresholds: nil,
-            # Protocol enables
-            enable_mdns: true,
-            enable_kademlia: true,
-            enable_relay: false,
-            enable_relay_server: false,
-            enable_autonat: false,
-            enable_upnp: false,
-            enable_websocket: false,
-            enable_rendezvous_client: false,
-            enable_rendezvous_server: false,
-            # Request-Response
-            rpc_protocol_name: "/ex-libp2p/rpc/1.0.0",
-            rpc_request_timeout_secs: 30,
-            # Connection limits
-            idle_connection_timeout_secs: 60,
-            max_established_incoming: 256,
-            max_established_outgoing: 256,
-            max_pending_incoming: 128,
-            max_pending_outgoing: 64,
-            max_established_per_peer: 2,
-            # Relay server config
-            relay_max_reservations: 128,
-            relay_max_circuits: 16,
-            relay_max_circuit_duration_secs: 120,
-            relay_max_circuit_bytes: 131_072
+  alias __MODULE__.{Discovery, Gossipsub, Identity, Network, Relay, Rendezvous, RequestResponse}
 
-  @typedoc "Configuration for a libp2p node."
+  @enforce_keys []
+  defstruct identity: %Identity{},
+            network: %Network{},
+            discovery: %Discovery{},
+            gossipsub: %Gossipsub{},
+            request_response: %RequestResponse{},
+            relay: %Relay{},
+            rendezvous: %Rendezvous{}
+
+  @typedoc "Configuration for a libp2p node — seven subgroups."
   @type t :: %__MODULE__{
-          keypair_bytes: binary() | nil,
-          listen_addrs: [String.t()],
-          bootstrap_peers: [String.t()],
-          gossipsub_topics: [String.t()],
-          gossipsub_mesh_n: pos_integer(),
-          gossipsub_mesh_n_low: pos_integer(),
-          gossipsub_mesh_n_high: pos_integer(),
-          gossipsub_gossip_lazy: pos_integer(),
-          gossipsub_max_transmit_size: pos_integer(),
-          gossipsub_heartbeat_interval_ms: pos_integer(),
-          gossipsub_peer_score: ExLibp2p.Gossipsub.PeerScore.t() | nil,
-          gossipsub_thresholds: ExLibp2p.Gossipsub.PeerScore.Thresholds.t() | nil,
-          enable_mdns: boolean(),
-          enable_kademlia: boolean(),
-          enable_relay: boolean(),
-          enable_relay_server: boolean(),
-          enable_autonat: boolean(),
-          enable_upnp: boolean(),
-          enable_websocket: boolean(),
-          enable_rendezvous_client: boolean(),
-          enable_rendezvous_server: boolean(),
-          rpc_protocol_name: String.t(),
-          rpc_request_timeout_secs: pos_integer(),
-          idle_connection_timeout_secs: pos_integer(),
-          max_established_incoming: pos_integer(),
-          max_established_outgoing: pos_integer(),
-          max_pending_incoming: pos_integer(),
-          max_pending_outgoing: pos_integer(),
-          max_established_per_peer: pos_integer(),
-          relay_max_reservations: pos_integer(),
-          relay_max_circuits: pos_integer(),
-          relay_max_circuit_duration_secs: pos_integer(),
-          relay_max_circuit_bytes: pos_integer()
+          identity: Identity.t(),
+          network: Network.t(),
+          discovery: Discovery.t(),
+          gossipsub: Gossipsub.t(),
+          request_response: RequestResponse.t(),
+          relay: Relay.t(),
+          rendezvous: Rendezvous.t()
         }
 
-  @known_keys [
-    :keypair_bytes,
+  # Flat-opt → subgroup-field translation tables. Drives both `new/1` (in)
+  # and `to_nif_map/1` (out). Single source of truth for which flat key
+  # belongs in which subgroup.
+  @identity_keys [:keypair_bytes]
+  @network_keys [
     :listen_addrs,
-    :bootstrap_peers,
-    :gossipsub_topics,
-    :gossipsub_mesh_n,
-    :gossipsub_mesh_n_low,
-    :gossipsub_mesh_n_high,
-    :gossipsub_gossip_lazy,
-    :gossipsub_max_transmit_size,
-    :gossipsub_heartbeat_interval_ms,
-    :gossipsub_peer_score,
-    :gossipsub_thresholds,
-    :enable_mdns,
-    :enable_kademlia,
-    :enable_relay,
-    :enable_relay_server,
-    :enable_autonat,
-    :enable_upnp,
-    :enable_websocket,
-    :enable_rendezvous_client,
-    :enable_rendezvous_server,
-    :rpc_protocol_name,
-    :rpc_request_timeout_secs,
     :idle_connection_timeout_secs,
-    :max_established_incoming,
-    :max_established_outgoing,
     :max_pending_incoming,
     :max_pending_outgoing,
+    :max_established_incoming,
+    :max_established_outgoing,
     :max_established_per_peer,
-    :relay_max_reservations,
-    :relay_max_circuits,
-    :relay_max_circuit_duration_secs,
-    :relay_max_circuit_bytes
+    :memory_max_percentage,
+    :enable_websocket
   ]
+  @discovery_keys [
+    :bootstrap_peers,
+    :enable_mdns,
+    :enable_kademlia,
+    :mdns_auto_dial,
+    :dht_state_path
+  ]
+  @gossipsub_renames %{
+    gossipsub_topics: :topics,
+    gossipsub_mesh_n: :mesh_n,
+    gossipsub_mesh_n_low: :mesh_n_low,
+    gossipsub_mesh_n_high: :mesh_n_high,
+    gossipsub_gossip_lazy: :gossip_lazy,
+    gossipsub_max_transmit_size: :max_transmit_size,
+    gossipsub_heartbeat_interval_ms: :heartbeat_interval_ms,
+    gossipsub_peer_score: :peer_score,
+    gossipsub_thresholds: :thresholds,
+    gossipsub_peer_score_disabled: :peer_score_disabled
+  }
+  @request_response_renames %{
+    rpc_protocol_name: :protocol_name,
+    rpc_request_timeout_secs: :request_timeout_secs
+  }
+  @relay_renames %{
+    enable_relay: :enable,
+    enable_relay_server: :enable_server,
+    enable_autonat: :enable_autonat,
+    enable_autonat_server: :enable_autonat_server,
+    enable_upnp: :enable_upnp,
+    relay_max_reservations: :max_reservations,
+    relay_max_circuits: :max_circuits,
+    relay_max_circuit_duration_secs: :max_circuit_duration_secs,
+    relay_max_circuit_bytes: :max_circuit_bytes
+  }
+  @rendezvous_renames %{
+    enable_rendezvous_client: :enable_client,
+    enable_rendezvous_server: :enable_server
+  }
+
+  @known_keys @identity_keys ++
+                @network_keys ++
+                @discovery_keys ++
+                Map.keys(@gossipsub_renames) ++
+                Map.keys(@request_response_renames) ++
+                Map.keys(@relay_renames) ++
+                Map.keys(@rendezvous_renames)
 
   @doc """
   Creates a new config with default values.
 
   ## Examples
 
-      iex> ExLibp2p.Node.Config.new().listen_addrs
+      iex> ExLibp2p.Node.Config.new().network.listen_addrs
       ["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic-v1"]
 
   """
@@ -146,18 +118,28 @@ defmodule ExLibp2p.Node.Config do
   @doc """
   Creates a new config with the given overrides.
 
+  Accepts a flat keyword list — overrides are routed into the matching subgroup.
   Raises `ArgumentError` if unknown keys are provided.
 
   ## Examples
 
-      iex> ExLibp2p.Node.Config.new(enable_mdns: false).enable_mdns
+      iex> ExLibp2p.Node.Config.new(enable_mdns: false).discovery.enable_mdns
       false
 
   """
   @spec new(keyword()) :: t()
   def new(opts) when is_list(opts) do
     Keyword.validate!(opts, @known_keys)
-    struct!(__MODULE__, opts)
+
+    %__MODULE__{
+      identity: %Identity{keypair_bytes: opts[:keypair_bytes]},
+      network: struct(Network, Keyword.take(opts, @network_keys)),
+      discovery: struct(Discovery, Keyword.take(opts, @discovery_keys)),
+      gossipsub: struct(Gossipsub, take_with_renames(opts, @gossipsub_renames)),
+      request_response: struct(RequestResponse, take_with_renames(opts, @request_response_renames)),
+      relay: struct(Relay, take_with_renames(opts, @relay_renames)),
+      rendezvous: struct(Rendezvous, take_with_renames(opts, @rendezvous_renames))
+    }
   end
 
   @doc """
@@ -170,10 +152,94 @@ defmodule ExLibp2p.Node.Config do
 
   """
   @spec validate(t()) :: {:ok, t()} | {:error, atom()}
-  def validate(%__MODULE__{listen_addrs: []}), do: {:error, :no_listen_addrs}
+  def validate(%__MODULE__{network: %Network{listen_addrs: []}}), do: {:error, :no_listen_addrs}
 
-  def validate(%__MODULE__{idle_connection_timeout_secs: t}) when t <= 0,
+  def validate(%__MODULE__{network: %Network{idle_connection_timeout_secs: t}}) when t <= 0,
     do: {:error, :invalid_timeout}
 
   def validate(%__MODULE__{} = config), do: {:ok, config}
+
+  def validate(_), do: {:error, :invalid_config}
+
+  @doc """
+  Flattens the nested config into the string-keyed map the NIF expects.
+
+  The Rust `crate::config::NodeConfig::from_map` reads a flat `HashMap<String,
+  Term>` — this function is the single point that translates from the
+  Elixir-side nested struct shape to the Rust-side flat shape. `peer_score` and
+  `thresholds` stay nested as string-keyed maps because the Rust side decodes
+  them as inner HashMaps.
+  """
+  @spec to_nif_map(t()) :: %{String.t() => term()}
+  def to_nif_map(%__MODULE__{} = config) do
+    %{
+      # Identity
+      "keypair_bytes" => config.identity.keypair_bytes,
+
+      # Network
+      "listen_addrs" => config.network.listen_addrs,
+      "idle_connection_timeout_secs" => config.network.idle_connection_timeout_secs,
+      "max_pending_incoming" => config.network.max_pending_incoming,
+      "max_pending_outgoing" => config.network.max_pending_outgoing,
+      "max_established_incoming" => config.network.max_established_incoming,
+      "max_established_outgoing" => config.network.max_established_outgoing,
+      "max_established_per_peer" => config.network.max_established_per_peer,
+      "memory_max_percentage" => config.network.memory_max_percentage,
+      "enable_websocket" => config.network.enable_websocket,
+
+      # Discovery
+      "bootstrap_peers" => config.discovery.bootstrap_peers,
+      "enable_mdns" => config.discovery.enable_mdns,
+      "enable_kademlia" => config.discovery.enable_kademlia,
+      "mdns_auto_dial" => config.discovery.mdns_auto_dial,
+
+      # Gossipsub (renamed back to flat NIF keys)
+      "gossipsub_topics" => config.gossipsub.topics,
+      "gossipsub_mesh_n" => config.gossipsub.mesh_n,
+      "gossipsub_mesh_n_low" => config.gossipsub.mesh_n_low,
+      "gossipsub_mesh_n_high" => config.gossipsub.mesh_n_high,
+      "gossipsub_gossip_lazy" => config.gossipsub.gossip_lazy,
+      "gossipsub_max_transmit_size" => config.gossipsub.max_transmit_size,
+      "gossipsub_heartbeat_interval_ms" => config.gossipsub.heartbeat_interval_ms,
+      "gossipsub_peer_score" => stringify_struct(config.gossipsub.peer_score),
+      "gossipsub_thresholds" => stringify_struct(config.gossipsub.thresholds),
+      "peer_score_disabled" => config.gossipsub.peer_score_disabled,
+
+      # Request-Response
+      "rpc_protocol_name" => config.request_response.protocol_name,
+      "rpc_request_timeout_secs" => config.request_response.request_timeout_secs,
+
+      # Relay
+      "enable_relay" => config.relay.enable,
+      "enable_relay_server" => config.relay.enable_server,
+      "enable_autonat" => config.relay.enable_autonat,
+      "enable_autonat_server" => config.relay.enable_autonat_server,
+      "enable_upnp" => config.relay.enable_upnp,
+      "relay_max_reservations" => config.relay.max_reservations,
+      "relay_max_circuits" => config.relay.max_circuits,
+      "relay_max_circuit_duration_secs" => config.relay.max_circuit_duration_secs,
+      "relay_max_circuit_bytes" => config.relay.max_circuit_bytes,
+
+      # Rendezvous
+      "enable_rendezvous_client" => config.rendezvous.enable_client,
+      "enable_rendezvous_server" => config.rendezvous.enable_server
+    }
+  end
+
+  # --- Private ---
+
+  defp take_with_renames(opts, rename_map) do
+    Enum.reduce(rename_map, [], fn {flat_key, field}, acc ->
+      case Keyword.fetch(opts, flat_key) do
+        {:ok, value} -> [{field, value} | acc]
+        :error -> acc
+      end
+    end)
+  end
+
+  defp stringify_struct(nil), do: nil
+
+  defp stringify_struct(%{__struct__: _} = s) do
+    s |> Map.from_struct() |> Map.new(fn {k, v} -> {to_string(k), v} end)
+  end
 end

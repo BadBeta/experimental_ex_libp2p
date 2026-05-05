@@ -45,6 +45,11 @@ pub struct NodeBehaviour {
     pub relay_client: relay::client::Behaviour,
     pub relay_server: Toggle<relay::Behaviour>,
     pub dcutr: Toggle<dcutr::Behaviour>,
+    // the v1 client (aggregated `StatusChanged` event surface preserved
+    // for `:nat_status_changed`). v2 server lives in `autonat::v2::server`
+    // and is amplification-resistant; opt-in for publicly reachable
+    // nodes via `enable_autonat_server`.
     pub autonat: Toggle<autonat::Behaviour>,
+    pub autonat_server: Toggle<autonat::v2::server::Behaviour>,
     pub upnp: Toggle<upnp::tokio::Behaviour>,
 }

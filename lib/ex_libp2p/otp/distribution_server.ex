@@ -44,6 +44,10 @@ defmodule ExLibp2p.OTP.Distribution.Server do
     {:ok, %{node: node}}
   end
 
+  # Distribution.Server state has no secrets; pass through unmodified.
+  @impl true
+  def format_status(status), do: status
+
   @impl true
   def handle_info(
         {:libp2p, :inbound_request, %Event.InboundRequest{channel_id: channel_id, data: data}},

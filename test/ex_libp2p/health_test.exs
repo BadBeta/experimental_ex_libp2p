@@ -32,4 +32,14 @@ defmodule ExLibp2p.HealthTest do
       GenServer.stop(health)
     end
   end
+
+  describe "format_status/1" do
+    test "returns a map without sensitive fields" do
+      state = %{node: :fake_node_pid, interval: 30_000, consecutive_failures: 2}
+      formatted = Health.format_status(%{state: state, queue: []})
+      assert is_map(formatted)
+      assert formatted.state.consecutive_failures == 2
+      assert formatted.state.interval == 30_000
+    end
+  end
 end

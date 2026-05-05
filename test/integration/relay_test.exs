@@ -34,4 +34,21 @@ defmodule ExLibp2p.Integration.RelayTest do
 
     Node.stop(node)
   end
+
+  @tag :integration
+  test "node starts with AutoNAT v2 server enabled" do
+    # (`autonat::v2::server::Behaviour`) loads alongside v1 client without
+    # a crash. The v2 server is amplification-resistant and dial-backs
+    # over a fresh port; relay/bootstrap nodes turn it on.
+    {:ok, node} =
+      start_test_node(
+        enable_relay: true,
+        enable_autonat: true,
+        enable_autonat_server: true
+      )
+
+    assert {:ok, %ExLibp2p.PeerId{}} = Node.peer_id(node)
+
+    Node.stop(node)
+  end
 end

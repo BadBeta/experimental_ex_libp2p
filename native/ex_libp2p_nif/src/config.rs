@@ -17,10 +17,12 @@ pub struct NodeConfig {
     pub gossipsub_heartbeat_interval_ms: u64,
     // Protocol enables
     pub enable_mdns: bool,
+    pub mdns_auto_dial: bool,
     pub enable_kademlia: bool,
     pub enable_relay: bool,
     pub enable_relay_server: bool,
     pub enable_autonat: bool,
+    pub enable_autonat_server: bool,
     pub enable_upnp: bool,
     pub enable_websocket: bool,
     pub enable_rendezvous_client: bool,
@@ -35,12 +37,18 @@ pub struct NodeConfig {
     pub max_pending_incoming: u32,
     pub max_pending_outgoing: u32,
     pub max_established_per_peer: u32,
+    // Memory-based connection limit (libp2p Rule 2)
+    pub memory_max_percentage: f64,
     // Relay server config
     pub relay_max_reservations: u32,
     pub relay_max_circuits: u32,
     pub relay_max_circuit_duration_secs: u64,
     pub relay_max_circuit_bytes: u64,
-    // Peer scoring (parsed from nested Elixir maps)
+    // Peer scoring. `peer_score_disabled = true` skips `with_peer_score()`
+    // entirely; otherwise scoring is ALWAYS applied — user-supplied values
+    // from `peer_score`/`thresholds` when present, `policy::*` defaults
+    // (Ethereum beacon chain reference values) otherwise.
+    pub peer_score_disabled: bool,
     pub peer_score: Option<PeerScoreConfig>,
     pub thresholds: Option<ThresholdsConfig>,
 }
@@ -80,10 +88,12 @@ impl NodeConfig {
             gossipsub_max_transmit_size: get_usize(map, "gossipsub_max_transmit_size", 65536),
             gossipsub_heartbeat_interval_ms: get_u64(map, "gossipsub_heartbeat_interval_ms", 1000),
             enable_mdns: get_bool(map, "enable_mdns", true),
+            mdns_auto_dial: get_bool(map, "mdns_auto_dial", true),
             enable_kademlia: get_bool(map, "enable_kademlia", true),
             enable_relay: get_bool(map, "enable_relay", false),
             enable_relay_server: get_bool(map, "enable_relay_server", false),
             enable_autonat: get_bool(map, "enable_autonat", false),
+            enable_autonat_server: get_bool(map, "enable_autonat_server", false),
             enable_upnp: get_bool(map, "enable_upnp", false),
             enable_websocket: get_bool(map, "enable_websocket", false),
             enable_rendezvous_client: get_bool(map, "enable_rendezvous_client", false),
@@ -96,10 +106,12 @@ impl NodeConfig {
             max_pending_incoming: get_u32(map, "max_pending_incoming", 128),
             max_pending_outgoing: get_u32(map, "max_pending_outgoing", 64),
             max_established_per_peer: get_u32(map, "max_established_per_peer", 2),
+            memory_max_percentage: get_f64(map, "memory_max_percentage", 0.9),
             relay_max_reservations: get_u32(map, "relay_max_reservations", 128),
             relay_max_circuits: get_u32(map, "relay_max_circuits", 16),
             relay_max_circuit_duration_secs: get_u64(map, "relay_max_circuit_duration_secs", 120),
             relay_max_circuit_bytes: get_u64(map, "relay_max_circuit_bytes", 131072),
+            peer_score_disabled: get_bool(map, "peer_score_disabled", false),
             peer_score: get_peer_score(map),
             thresholds: get_thresholds(map),
         })

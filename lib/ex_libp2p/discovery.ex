@@ -50,4 +50,6 @@ defmodule ExLibp2p.Discovery do
       {:error, _} = error -> error
     end
   end
+
+  def bootstrap(_node, _bad), do: {:error, :invalid_peer_addrs}
 end

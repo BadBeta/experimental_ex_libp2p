@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rustler = "0.36.2"
-libp2p = { version = "0.54", features = [
+libp2p = { version = "0.56", features = [
     "tokio",
     # Transports
     "tcp",
@@ -50,3 +50,42 @@ tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 tracing = "0.1"
 parking_lot = "0.12"
+thiserror = "2"
+prometheus-client = "0.23"
+# §§ libp2p: subskill nat-traversal — AutoNAT v2 server takes an `OsRng`
+# constructor argument. Transitive `rand` from libp2p-autonat does not
+# re-export through `libp2p::*`, so we pull `rand` directly. Pinned to
+# the same version libp2p-autonat 0.15 uses to avoid duplicate-crate
+# bloat (a duplicate would trigger `multiple versions` rustc warnings
+# similar to the prometheus-client one we just fixed).
+rand = "0.8"
+
+# Pin no-unsafe + production-quality lint policy. Operators thinking
+# "tighten lints for this crate" find this section, not scattered
+# `#![deny]` attributes across files.
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+# DoS / correctness lints — keep these as warn so they show up in CI
+# without breaking the build on every iteration.
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+# Clippy's `type_complexity` lint flags generic-heavy code; libp2p's
+# `Toggle<T>` and `NetworkBehaviour` derive produce dense types where
+# this lint adds noise without value. Allow per-crate (axum/tower do
+# the same).
+type_complexity = "allow"
+
+# Production release profile. lto = "thin" gives ~85% of fat-LTO's
+# perf with much shorter build times; codegen-units = 1 enables more
+# aggressive cross-function optimization. strip = "symbols" reduces the
+# .so size by ~30% in dev/CI builds. Keeping panic-unwind (the default)
+# because rustler's NIF boundary uses catch_unwind to convert panics
+# into Erlang errors — `panic = "abort"` would break that.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

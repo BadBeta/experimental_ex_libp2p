@@ -80,4 +80,12 @@ defmodule ExLibp2p.KeypairTest do
       end
     end
   end
+
+  describe "to_protobuf/1 catch-all" do
+    test "returns {:error, :invalid_input} for non-Keypair input" do
+      assert {:error, :invalid_input} = Keypair.to_protobuf(:not_a_keypair)
+      assert {:error, :invalid_input} = Keypair.to_protobuf(%{not: :a_keypair})
+      assert {:error, :invalid_input} = Keypair.to_protobuf(nil)
+    end
+  end
 end

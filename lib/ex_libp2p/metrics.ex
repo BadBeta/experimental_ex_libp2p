@@ -2,12 +2,16 @@ defmodule ExLibp2p.Metrics do
   @moduledoc """
   Network metrics and observability.
 
-  Provides bandwidth statistics and integrates with `ExLibp2p.Telemetry`
-  for Prometheus/StatsD reporting.
+  Provides bandwidth statistics and a Prometheus text-format scrape suitable
+  for direct exposure at a `/metrics` endpoint, plus integration with
+  `ExLibp2p.Telemetry` for Prometheus/StatsD reporting.
 
   ## Usage
 
       {:ok, %{bytes_in: in, bytes_out: out}} = ExLibp2p.Metrics.bandwidth(node)
+
+      # Full Prometheus text scrape (for /metrics endpoints):
+      {:ok, text} = ExLibp2p.Metrics.prometheus_scrape(node)
 
   """
 
@@ -25,4 +29,15 @@ defmodule ExLibp2p.Metrics do
       {:error, _} = error -> error
     end
   end
+
+  @doc """
+  Returns the libp2p metrics registry encoded as Prometheus text format.
+
+  The Rust-side `SwarmBuilder::with_bandwidth_metrics` registers bandwidth
+  counters into a `prometheus_client::Registry`; this function scrapes
+  that registry. The string can be served directly at a `/metrics` HTTP
+  endpoint or fed into a metrics aggregator.
+  """
+  @spec prometheus_scrape(GenServer.server()) :: {:ok, String.t()} | {:error, term()}
+  def prometheus_scrape(node), do: safe_call(node, :prometheus_metrics)
 end

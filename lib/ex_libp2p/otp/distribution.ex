@@ -155,6 +155,8 @@ defmodule ExLibp2p.OTP.Distribution do
     {:ok, encode({:reply, :ok})}
   end
 
+  def handle_remote_request(_), do: {:ok, encode({:error, :unknown_request})}
+
   @doc """
   Encodes an Elixir term for transmission over the wire.
 
@@ -187,6 +189,8 @@ defmodule ExLibp2p.OTP.Distribution do
     # legitimate use of rescue in this module.
     ArgumentError -> {:error, :invalid_message}
   end
+
+  def decode(_), do: {:error, :invalid_input}
 
   # Resolve a registered name to a PID, returning nil if not found.
   defp whereis(name) when is_atom(name), do: Process.whereis(name)

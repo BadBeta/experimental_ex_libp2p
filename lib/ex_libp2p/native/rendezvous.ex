@@ -6,7 +6,7 @@ defmodule ExLibp2p.Native.Rendezvous do
   @type handle :: reference()
 
   @callback rendezvous_register(handle(), String.t(), non_neg_integer(), String.t()) ::
-              :ok | {:error, atom()}
-  @callback rendezvous_discover(handle(), String.t(), String.t()) :: :ok | {:error, atom()}
-  @callback rendezvous_unregister(handle(), String.t(), String.t()) :: :ok | {:error, atom()}
+              :ok | {:error, term()}
+  @callback rendezvous_discover(handle(), String.t(), String.t()) :: :ok | {:error, term()}
+  @callback rendezvous_unregister(handle(), String.t(), String.t()) :: :ok | {:error, term()}
 end

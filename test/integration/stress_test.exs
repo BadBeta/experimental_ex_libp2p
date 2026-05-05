@@ -30,11 +30,27 @@ defmodule ExLibp2p.Integration.StressTest do
   # Pause between churn waves
   @churn_wave_pause 5_000
 
+  # default-on with Ethereum reference values including
+  # `ip_colocation_factor_weight: -53.0` at `threshold: 3.0`. With many
+  # nodes on the same loopback IP (this whole file), the colocation
+  # penalty graylists every peer (`(N - 3)² × -53` exceeds the
+  # `graylist_threshold` of -16000 at N≥21). Stress tests on a single
+  # host MUST opt out of scoring; production deployments on distinct
+  # IPs leave it on. Centralized here so every test in this file gets
+  # it via merge.
+  @stress_opts [gossipsub_peer_score_disabled: true]
+
+  defp start_stress_node(opts) do
+    start_test_node(Keyword.merge(@stress_opts, opts))
+  end
+
   @tag :stress
   test "100-node network with 10 churning mDNS-discovered nodes" do
     # ── Phase 1: Bootstrap the backbone ──────────────────────────
     IO.puts("\n[stress] Phase 1: Starting seed node...")
-    {:ok, seed} = start_test_node(enable_mdns: true)
+    # Seed broadcasts via mDNS so churn can discover it; doesn't auto-dial
+    # back (would create a 90-way dial storm to backbone).
+    {:ok, seed} = start_stress_node(enable_mdns: true, mdns_auto_dial: false)
     Process.sleep(500)
     {:ok, [seed_addr | _]} = Node.listening_addrs(seed)
     {:ok, seed_id} = Node.peer_id(seed)
@@ -53,7 +69,9 @@ defmodule ExLibp2p.Integration.StressTest do
       |> Enum.flat_map(fn {batch, batch_num} ->
         nodes =
           Enum.map(batch, fn _i ->
-            {:ok, node} = start_test_node(enable_mdns: true)
+            # Backbone connects via explicit dial — mDNS off avoids the
+            # N×N broadcast/discovery storm with 90 nodes on one host.
+            {:ok, node} = start_stress_node(enable_mdns: false)
             :ok = Node.dial(node, seed_multiaddr)
             node
           end)
@@ -100,7 +118,7 @@ defmodule ExLibp2p.Integration.StressTest do
 
     churn_wave_1 =
       Enum.map(1..@churn_count, fn i ->
-        {:ok, node} = start_test_node(enable_mdns: true)
+        {:ok, node} = start_stress_node(enable_mdns: true)
 
         if rem(i, 3) == 0 do
           Process.sleep(200)
@@ -170,7 +188,7 @@ defmodule ExLibp2p.Integration.StressTest do
 
     churn_wave_2 =
       Enum.map(1..@churn_count, fn i ->
-        {:ok, node} = start_test_node(enable_mdns: true)
+        {:ok, node} = start_stress_node(enable_mdns: true)
 
         if rem(i, 3) == 0 do
           Process.sleep(200)
@@ -246,7 +264,10 @@ defmodule ExLibp2p.Integration.StressTest do
     topic = "stress-gossip"
 
     IO.puts("\n[stress-gossip] Starting seed...")
-    {:ok, seed} = start_test_node(enable_mdns: true, gossipsub_topics: [topic])
+    # Seed broadcasts via mDNS for churn discovery, no auto-dial back.
+    {:ok, seed} =
+      start_stress_node(enable_mdns: true, mdns_auto_dial: false, gossipsub_topics: [topic])
+
     Process.sleep(500)
     {:ok, [seed_addr | _]} = Node.listening_addrs(seed)
     {:ok, seed_id} = Node.peer_id(seed)
@@ -263,7 +284,7 @@ defmodule ExLibp2p.Integration.StressTest do
       |> Enum.flat_map(fn batch ->
         nodes =
           Enum.map(batch, fn _i ->
-            {:ok, node} = start_test_node(enable_mdns: true, gossipsub_topics: [topic])
+            {:ok, node} = start_stress_node(enable_mdns: false, gossipsub_topics: [topic])
             :ok = Node.dial(node, seed_multiaddr)
             node
           end)
@@ -307,7 +328,9 @@ defmodule ExLibp2p.Integration.StressTest do
 
     newcomers =
       Enum.map(1..10, fn _i ->
-        {:ok, node} = start_test_node(enable_mdns: true, gossipsub_topics: [topic])
+        {:ok, node} =
+          start_stress_node(enable_mdns: false, gossipsub_topics: [topic])
+
         :ok = Node.dial(node, seed_multiaddr)
         node
       end)
@@ -354,7 +377,10 @@ defmodule ExLibp2p.Integration.StressTest do
     topics = ["chat", "sensors", "blocks"]
 
     IO.puts("\n[stress-msg] Starting seed node...")
-    {:ok, seed} = start_test_node(enable_mdns: true, gossipsub_topics: topics)
+
+    {:ok, seed} =
+      start_stress_node(enable_mdns: true, mdns_auto_dial: false, gossipsub_topics: topics)
+
     Process.sleep(500)
     {:ok, [seed_addr | _]} = Node.listening_addrs(seed)
     {:ok, seed_id} = Node.peer_id(seed)
@@ -371,7 +397,7 @@ defmodule ExLibp2p.Integration.StressTest do
       |> Enum.flat_map(fn {batch, batch_num} ->
         batch_nodes =
           Enum.map(batch, fn _i ->
-            {:ok, node} = start_test_node(enable_mdns: true, gossipsub_topics: topics)
+            {:ok, node} = start_stress_node(enable_mdns: false, gossipsub_topics: topics)
             :ok = Node.dial(node, seed_multiaddr)
             node
           end)
@@ -560,10 +586,10 @@ defmodule ExLibp2p.Integration.StressTest do
     IO.puts("[stress-msg]   #{length(churn_victims)} nodes departed")
     Process.sleep(2_000)
 
-    # 10 new nodes join
+    # 10 new nodes join via explicit dial; mDNS off to keep mesh stable.
     newcomers =
       Enum.map(1..10, fn _i ->
-        {:ok, node} = start_test_node(enable_mdns: true, gossipsub_topics: topics)
+        {:ok, node} = start_stress_node(enable_mdns: false, gossipsub_topics: topics)
         :ok = Node.dial(node, seed_multiaddr)
         node
       end)

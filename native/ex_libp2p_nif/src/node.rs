@@ -43,9 +43,21 @@ fn get_runtime() -> Result<&'static Runtime, String> {
 
 /// Handle stored in ResourceArc — holds only the command channel sender.
 /// Per rust-nif rule 15: hold a channel sender, NOT the Swarm itself.
+///
+/// `metrics_registry` is the Prometheus registry that the SwarmBuilder
+/// `with_bandwidth_metrics` chain registered counters into. Held alive so
+/// callers can scrape it via the `prometheus_metrics/1` NIF — without this
+/// the registry was dropped immediately after build and the counters had
+/// no observable surface.
+///
+/// Uses `std::sync::Mutex` (not `parking_lot::Mutex`) so the `Registry`'s
+/// internal `UnsafeCell` doesn't propagate `!RefUnwindSafe` through to
+/// ResourceArc — Rustler's `NifReturnable` impl for resources needs the
+/// inner type to satisfy unwind-safety bounds.
 pub struct NodeHandle {
     pub cmd_tx: mpsc::Sender<Command>,
     pub peer_id: String,
+    pub metrics_registry: std::sync::Arc<std::sync::Mutex<prometheus_client::registry::Registry>>,
 }
 
 #[rustler::resource_impl]
@@ -89,7 +101,7 @@ pub fn start_node_inner(
         .with_max_established_outgoing(Some(config.max_established_outgoing))
         .with_max_established_per_peer(Some(config.max_established_per_peer))
         .with_max_established(Some(
-            config.max_established_incoming as u32 + config.max_established_outgoing as u32,
+            config.max_established_incoming + config.max_established_outgoing,
         ));
 
     // GossipSub
@@ -117,14 +129,28 @@ pub fn start_node_inner(
     )
     .map_err(|e| format!("gossipsub behaviour: {e}"))?;
 
-    // Wire peer scoring if configured
-    if let Some(ref ps) = config.peer_score {
-        let peer_score_params = gossipsub::PeerScoreParams {
-            ip_colocation_factor_weight: ps.ip_colocation_factor_weight,
-            ip_colocation_factor_threshold: ps.ip_colocation_factor_threshold,
-            behaviour_penalty_weight: ps.behaviour_penalty_weight,
-            behaviour_penalty_decay: ps.behaviour_penalty_decay,
-            ..Default::default()
+    // Peer scoring is default-on (libp2p production-checklist requirement).
+    // Skip ONLY if the caller explicitly opted out via
+    // `peer_score_disabled: true`. Otherwise apply scoring with user-supplied
+    // values when present, `policy::*` Ethereum beacon chain defaults otherwise.
+    if !config.peer_score_disabled {
+        use crate::policy::{gossipsub_default_score as ds, gossipsub_default_thresholds as dt};
+
+        let peer_score_params = match &config.peer_score {
+            Some(ps) => gossipsub::PeerScoreParams {
+                ip_colocation_factor_weight: ps.ip_colocation_factor_weight,
+                ip_colocation_factor_threshold: ps.ip_colocation_factor_threshold,
+                behaviour_penalty_weight: ps.behaviour_penalty_weight,
+                behaviour_penalty_decay: ps.behaviour_penalty_decay,
+                ..Default::default()
+            },
+            None => gossipsub::PeerScoreParams {
+                ip_colocation_factor_weight: ds::IP_COLOCATION_FACTOR_WEIGHT,
+                ip_colocation_factor_threshold: ds::IP_COLOCATION_FACTOR_THRESHOLD,
+                behaviour_penalty_weight: ds::BEHAVIOUR_PENALTY_WEIGHT,
+                behaviour_penalty_decay: ds::BEHAVIOUR_PENALTY_DECAY,
+                ..Default::default()
+            },
         };
 
         let thresholds = match &config.thresholds {
@@ -134,9 +160,14 @@ pub fn start_node_inner(
                 graylist_threshold: t.graylist_threshold,
                 accept_px_threshold: t.accept_px_threshold,
                 opportunistic_graft_threshold: t.opportunistic_graft_threshold,
-                ..Default::default()
             },
-            None => gossipsub::PeerScoreThresholds::default(),
+            None => gossipsub::PeerScoreThresholds {
+                gossip_threshold: dt::GOSSIP,
+                publish_threshold: dt::PUBLISH,
+                graylist_threshold: dt::GRAYLIST,
+                accept_px_threshold: dt::ACCEPT_PX,
+                opportunistic_graft_threshold: dt::OPPORTUNISTIC_GRAFT,
+            },
         };
 
         gossipsub_behaviour
@@ -209,6 +240,18 @@ pub fn start_node_inner(
         None.into()
     };
 
+    // amplification-resistant (the server dials BACK over a fresh port
+    // rather than re-using the connection), making it safe to enable on
+    // publicly reachable nodes that want to verify clients' reachability.
+    // `OsRng` is the documented entropy source for v2.
+    let autonat_server_behaviour: libp2p::swarm::behaviour::toggle::Toggle<
+        autonat::v2::server::Behaviour,
+    > = if config.enable_autonat_server {
+        Some(autonat::v2::server::Behaviour::new(rand::rngs::OsRng)).into()
+    } else {
+        None.into()
+    };
+
     let upnp_behaviour: libp2p::swarm::behaviour::toggle::Toggle<upnp::tokio::Behaviour> =
         if config.enable_upnp {
             Some(upnp::tokio::Behaviour::default()).into()
@@ -233,8 +276,15 @@ pub fn start_node_inner(
         None.into()
     };
 
-    // Memory-based connection limits (reject new connections at 90% system memory)
-    let memory_limits = memory_connection_limits::Behaviour::with_max_percentage(0.9);
+    // Memory-based connection limits — percentage from Elixir config (libp2p Rule 2).
+    let memory_limits =
+        memory_connection_limits::Behaviour::with_max_percentage(config.memory_max_percentage);
+
+    // bandwidth counters registered by `with_bandwidth_metrics` are
+    // observable via the `prometheus_metrics/1` NIF. Previously the
+    // Registry was created via `&mut Registry::default()` and dropped
+    // immediately after build — counters incremented but went nowhere.
+    let mut metrics_registry = prometheus_client::registry::Registry::default();
 
     // Build the swarm with relay client for NAT traversal.
     // with_relay_client() changes with_behaviour closure to take TWO parameters:
@@ -252,7 +302,7 @@ pub fn start_node_inner(
         .map_err(|e| format!("dns: {e}"))?
         .with_relay_client(noise::Config::new, yamux::Config::default)
         .map_err(|e| format!("relay client: {e}"))?
-        .with_bandwidth_metrics(&mut libp2p::metrics::Registry::default())
+        .with_bandwidth_metrics(&mut metrics_registry)
         .with_behaviour(|_key, relay_client| {
             Ok(NodeBehaviour {
                 // Infrastructure — always present
@@ -276,6 +326,7 @@ pub fn start_node_inner(
                 relay_server: relay_server_behaviour,
                 dcutr: dcutr_behaviour,
                 autonat: autonat_behaviour,
+                autonat_server: autonat_server_behaviour,
                 upnp: upnp_behaviour,
             })
         })
@@ -307,10 +358,12 @@ pub fn start_node_inner(
     let (cmd_tx, cmd_rx) = mpsc::channel(512);
     let handle_tx = cmd_tx.clone();
 
+    let mdns_auto_dial = config.mdns_auto_dial;
     runtime.spawn(async move {
-        let result = std::panic::AssertUnwindSafe(swarm_loop(swarm, cmd_rx))
-            .catch_unwind()
-            .await;
+        let result =
+            std::panic::AssertUnwindSafe(swarm_loop(swarm, cmd_rx, mdns_auto_dial))
+                .catch_unwind()
+                .await;
 
         if let Err(e) = result {
             tracing::error!("swarm loop panicked: {e:?}");
@@ -320,13 +373,22 @@ pub fn start_node_inner(
     Ok(ResourceArc::new(NodeHandle {
         cmd_tx: handle_tx,
         peer_id: peer_id_str,
+        metrics_registry: std::sync::Arc::new(std::sync::Mutex::new(metrics_registry)),
     }))
 }
 
 /// The main swarm event loop.
+///
+/// `mdns_auto_dial` controls whether mDNS-discovered peers are
+/// automatically dialed. Default `true` is convenient for the LAN
+/// auto-connect use case (two-node mDNS demos, small deployments). Set
+/// `false` for stress tests with many co-located nodes — the
+/// connection-attempt storm from N² auto-dials prevents stable mesh
+/// formation.
 async fn swarm_loop(
     mut swarm: libp2p::Swarm<NodeBehaviour>,
     mut cmd_rx: mpsc::Receiver<Command>,
+    mdns_auto_dial: bool,
 ) {
     let mut event_handler: Option<LocalPid> = None;
 
@@ -379,10 +441,10 @@ async fn swarm_loop(
                         }
                     }
                     Some(Command::Unsubscribe { topic }) => {
+                        // returns `bool` in libp2p 0.56+ (was `Result<bool, _>` in 0.54);
+                        // `false` means "weren't subscribed" which is benign here.
                         let topic = gossipsub::IdentTopic::new(topic);
-                        if let Err(e) = swarm.behaviour_mut().gossipsub.unsubscribe(&topic) {
-                            tracing::warn!(%e, "unsubscribe failed");
-                        }
+                        let _was_subscribed = swarm.behaviour_mut().gossipsub.unsubscribe(&topic);
                     }
                     Some(Command::GossipsubMeshPeers { topic, reply }) => {
                         let topic_hash = gossipsub::IdentTopic::new(topic).hash();
@@ -465,6 +527,70 @@ async fn swarm_loop(
                         } else {
                             tracing::warn!("DHT not enabled — ignoring dht_bootstrap");
                         }
+                    }
+
+                    // `kad::Behaviour::kbuckets()` and yield each (peer_id,
+                    // addresses) pair. The k-buckets are the in-memory DHT
+                    // routing-table; persisting them lets a restarting node
+                    // skip rediscovery.
+                    Some(Command::DhtExportRoutingTable { reply }) => {
+                        let result = if let Some(kad) =
+                            swarm.behaviour_mut().kademlia.as_mut()
+                        {
+                            let mut entries = Vec::new();
+                            for bucket in kad.kbuckets() {
+                                for entry_view in bucket.iter() {
+                                    let peer_id_bytes =
+                                        entry_view.node.key.preimage().to_bytes();
+                                    let addresses = entry_view
+                                        .node
+                                        .value
+                                        .iter()
+                                        .map(|a| a.to_vec())
+                                        .collect();
+                                    entries.push(crate::dht_state::RoutingEntry {
+                                        peer_id: peer_id_bytes,
+                                        addresses,
+                                    });
+                                }
+                            }
+                            Ok(entries)
+                        } else {
+                            Err(())
+                        };
+                        let _ = reply.send(result);
+                    }
+                    Some(Command::DhtImportRoutingTable { entries, reply }) => {
+                        let result = if let Some(kad) =
+                            swarm.behaviour_mut().kademlia.as_mut()
+                        {
+                            let mut count = 0usize;
+                            for entry in entries {
+                                // Decode peer_id from bytes (multihash).
+                                let peer_id = match PeerId::from_bytes(&entry.peer_id) {
+                                    Ok(p) => p,
+                                    Err(e) => {
+                                        tracing::warn!(%e, "skipping invalid peer_id during import");
+                                        continue;
+                                    }
+                                };
+                                for addr_bytes in entry.addresses {
+                                    let addr = match Multiaddr::try_from(addr_bytes) {
+                                        Ok(a) => a,
+                                        Err(e) => {
+                                            tracing::warn!(%e, "skipping invalid multiaddr during import");
+                                            continue;
+                                        }
+                                    };
+                                    kad.add_address(&peer_id, addr);
+                                    count += 1;
+                                }
+                            }
+                            Ok(count)
+                        } else {
+                            Err(())
+                        };
+                        let _ = reply.send(result);
                     }
 
                     // ── Request-Response ────────────────────────
@@ -560,8 +686,29 @@ async fn swarm_loop(
                                 request,
                                 channel,
                             },
+                            // gained `connection_id` in libp2p 0.56; we don't surface it on the
+                            // Elixir side (yet), so wildcard.
+                            ..
                         },
                     )) => {
+                        // Cap pending_responses at MAX_PENDING_RESPONSES so a
+                        // peer flooding requests we never reply to can't grow
+                        // the map without bound. When at cap, drop the inbound
+                        // request — the channel is dropped here, which sends an
+                        // RST-equivalent to the peer. Eviction (60s TTL) makes
+                        // room for legitimate traffic on the next eviction tick.
+                        if pending_responses.len() >= crate::policy::MAX_PENDING_RESPONSES {
+                            tracing::warn!(
+                                peer = %peer,
+                                cap = crate::policy::MAX_PENDING_RESPONSES,
+                                "request-response pending cap reached — dropping inbound request"
+                            );
+                            // `channel` drops here; libp2p's request-response
+                            // surfaces this to the peer as a connection-closed
+                            // error on their `send_request`. No further
+                            // bookkeeping needed.
+                            continue;
+                        }
                         channel_counter += 1;
                         let channel_id = format!("ch-{channel_counter}");
                         pending_responses.insert(channel_id.clone(), (channel, Instant::now()));
@@ -583,6 +730,7 @@ async fn swarm_loop(
                                 request_id,
                                 response,
                             },
+                            ..
                         },
                     )) => {
                         if let Some(ref pid) = event_handler {
@@ -594,6 +742,49 @@ async fn swarm_loop(
                             );
                         }
                     }
+                    // emits a Discovered event; nothing in libp2p auto-dials.
+                    // For LAN auto-connect semantics (the canonical reason
+                    // mDNS exists in this codebase) we intercept here:
+                    // (a) add the peer's addresses to Kademlia's routing
+                    // table when DHT is enabled, so the peer is reachable
+                    // for content lookups; (b) issue a `swarm.dial(peer_id)`
+                    // so the application sees a `:connection_established`
+                    // event without having to wire its own auto-dial loop.
+                    // We then emit the discovery event to Elixir so app
+                    // handlers can also react.
+                    SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(
+                        libp2p::mdns::Event::Discovered(peers),
+                    )) => {
+                        let peer_pairs: Vec<(PeerId, Multiaddr)> = peers.into_iter().collect();
+
+                        for (peer_id, addr) in &peer_pairs {
+                            if let Some(kad) = swarm.behaviour_mut().kademlia.as_mut() {
+                                kad.add_address(peer_id, addr.clone());
+                            }
+                            if mdns_auto_dial
+                                && !swarm.is_connected(peer_id)
+                                && let Err(e) = swarm.dial(*peer_id)
+                            {
+                                tracing::debug!(%peer_id, %e, "mdns auto-dial skipped");
+                            }
+                        }
+
+                        if let Some(ref pid) = event_handler {
+                            crate::events::send_peers_discovered(pid, &peer_pairs);
+                        }
+                    }
+
+                    // mDNS expired event — peer's TTL elapsed without a refresh.
+                    // We don't disconnect proactively (libp2p will close idle
+                    // connections per `idle_connection_timeout`), but we
+                    // forward the event so Elixir handlers can react.
+                    SwarmEvent::Behaviour(NodeBehaviourEvent::Mdns(
+                        libp2p::mdns::Event::Expired(_),
+                    )) => {
+                        // No-op: not currently surfaced to Elixir. The
+                        // `:connection_closed` event covers actual disconnect.
+                    }
+
                     // All other events go through the generic handler
                     other => {
                         if let Some(ref pid) = event_handler {

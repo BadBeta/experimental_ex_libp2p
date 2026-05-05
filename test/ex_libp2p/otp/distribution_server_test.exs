@@ -71,4 +71,13 @@ defmodule ExLibp2p.OTP.Distribution.ServerTest do
 
     assert Process.alive?(server)
   end
+
+  describe "format_status/1" do
+    test "returns map without crashing on minimal state" do
+      state = %{node: :fake_node_pid}
+      formatted = DistServer.format_status(%{state: state, queue: []})
+      assert is_map(formatted)
+      assert formatted.state.node == :fake_node_pid
+    end
+  end
 end

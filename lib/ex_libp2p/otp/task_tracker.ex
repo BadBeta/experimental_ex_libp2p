@@ -77,7 +77,8 @@ defmodule ExLibp2p.OTP.TaskTracker do
   Does NOT send the actual message — the caller is responsible for
   dispatching via `ExLibp2p.OTP.Distribution.call/5` or similar.
   """
-  @spec dispatch(GenServer.server(), PeerId.t(), atom(), term()) :: {:ok, String.t()} | {:error, term()}
+  @spec dispatch(GenServer.server(), PeerId.t(), atom(), term()) ::
+          {:ok, String.t()} | {:error, term()}
   def dispatch(tracker, %PeerId{} = peer_id, target, message) when is_atom(target) do
     safe_call(tracker, {:dispatch, peer_id, target, message})
   end
@@ -136,7 +137,7 @@ defmodule ExLibp2p.OTP.TaskTracker do
       peer_id: peer_id,
       target: target,
       message: message,
-      dispatched_at: System.monotonic_time(:millisecond)
+      dispatched_at: ExLibp2p.Config.task_tracker_clock().monotonic_time(:millisecond)
     }
 
     state = %{state | tasks: Map.put(state.tasks, id, task), counter: state.counter + 1}
@@ -178,6 +179,25 @@ defmodule ExLibp2p.OTP.TaskTracker do
 
     {:reply, map_size(removed), %{state | tasks: kept}}
   end
+
+  def handle_call(unknown, _from, state) do
+    Logger.warning("[ExLibp2p.OTP.TaskTracker] Unknown call: #{inspect(unknown)}")
+    {:reply, {:error, :unknown_call}, state}
+  end
+
+  # production status dumps don't print large maps/lists.
+  @impl true
+  def format_status(%{state: %__MODULE__{} = state} = status) do
+    summary = %{
+      tasks: map_size(state.tasks),
+      subscribers: length(state.subscribers),
+      counter: state.counter
+    }
+
+    %{status | state: summary}
+  end
+
+  def format_status(status), do: status
 
   @impl true
   def handle_info(

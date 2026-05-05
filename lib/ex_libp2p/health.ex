@@ -45,6 +45,10 @@ defmodule ExLibp2p.Health do
     {:reply, collect_status(state.node), state}
   end
 
+  # Health state has no secrets; pass through unmodified.
+  @impl true
+  def format_status(status), do: status
+
   @impl true
   def handle_info(:check, state) do
     state =

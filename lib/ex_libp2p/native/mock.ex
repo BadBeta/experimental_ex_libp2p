@@ -17,7 +17,9 @@ defmodule ExLibp2p.Native.Mock do
   # --- Core ---
 
   @impl ExLibp2p.Native.Core
-  def start_node(_config), do: {:ok, make_ref()}
+  # reference on success, error tuple on failure. `Node.init/1` normalizes
+  # both into its `with` chain.
+  def start_node(_config), do: make_ref()
 
   @impl ExLibp2p.Native.Core
   def stop_node(_handle), do: :ok
@@ -77,6 +79,23 @@ defmodule ExLibp2p.Native.Mock do
   @impl ExLibp2p.Native.DHT
   def dht_bootstrap(_handle), do: :ok
 
+  # dictionary keeps it scoped to the test process. Real NIF walks
+  # `kad::Behaviour::kbuckets()`; the Mock just round-trips whatever
+  # bytes were last imported, which is enough for the Elixir-side
+  # plumbing test (Application.start/1 reads → import → roundtrip).
+  @impl ExLibp2p.Native.DHT
+  def kad_export_routing_table(_handle) do
+    {:ok, Process.get(:mock_dht_state, <<"L2DT", 1, 0, 0, 0, 0>>)}
+  end
+
+  @impl ExLibp2p.Native.DHT
+  def kad_import_routing_table(_handle, data) when is_binary(data) do
+    Process.put(:mock_dht_state, data)
+    # Pretend each entry of the canonical empty file is one peer; tests
+    # that care about the count assert on the real NIF, not the Mock.
+    {:ok, 0}
+  end
+
   # --- RPC ---
 
   @impl ExLibp2p.Native.RPC
@@ -116,6 +135,9 @@ defmodule ExLibp2p.Native.Mock do
 
   @impl ExLibp2p.Native.Metrics
   def bandwidth_stats(_handle), do: {:ok, 0, 0}
+
+  @impl ExLibp2p.Native.Metrics
+  def prometheus_metrics(_handle), do: {:ok, "# mock — no metrics registered\n"}
 
   # --- Rendezvous ---
 

@@ -21,8 +21,6 @@ defmodule ExLibp2p.Keypair do
 
   """
 
-  @default_native Application.compile_env(:ex_libp2p, :native_module, ExLibp2p.Native.Nif)
-
   @enforce_keys [:public_key, :peer_id]
   defstruct [:public_key, :peer_id, :protobuf_bytes]
 
@@ -66,6 +64,8 @@ defmodule ExLibp2p.Keypair do
 
   def to_protobuf(%__MODULE__{}), do: {:error, :no_protobuf_data}
 
+  def to_protobuf(_), do: {:error, :invalid_input}
+
   @doc """
   Decodes a keypair from protobuf binary format.
   """
@@ -92,17 +92,8 @@ defmodule ExLibp2p.Keypair do
   """
   @spec save(t(), Path.t()) :: :ok | {:error, term()}
   def save(%__MODULE__{protobuf_bytes: bytes}, path) when is_binary(bytes) do
-    tmp_path = path <> ".tmp"
-
-    with :ok <- File.write(tmp_path, bytes),
-         :ok <- File.chmod(tmp_path, 0o600),
-         :ok <- File.rename(tmp_path, path) do
-      :ok
-    else
-      {:error, reason} ->
-        File.rm(tmp_path)
-        {:error, reason}
-    end
+    # (default impl `Storage.File` preserves the atomic-write + 0o600 idiom).
+    ExLibp2p.Config.keypair_storage().write(path, bytes)
   end
 
   @doc """
@@ -125,7 +116,9 @@ defmodule ExLibp2p.Keypair do
   """
   @spec load(Path.t()) :: {:ok, t()} | {:error, :file_not_found | :invalid_keypair}
   def load(path) do
-    case File.read(path) do
+    # Translation `:enoent` → `:file_not_found` stays here because it's the
+    # high-level API contract; storage backends return raw POSIX errors.
+    case ExLibp2p.Config.keypair_storage().read(path) do
       {:ok, bytes} -> from_protobuf(bytes)
       {:error, :enoent} -> {:error, :file_not_found}
       {:error, reason} -> {:error, reason}
@@ -137,13 +130,22 @@ defmodule ExLibp2p.Keypair do
   """
   @spec load!(Path.t()) :: t()
   def load!(path) do
-    bytes = File.read!(path)
+    case load(path) do
+      {:ok, keypair} ->
+        keypair
 
-    case from_protobuf(bytes) do
-      {:ok, keypair} -> keypair
-      {:error, reason} -> raise ArgumentError, "invalid keypair file: #{inspect(reason)}"
+      {:error, :file_not_found} ->
+        raise File.Error, reason: :enoent, action: "read file", path: path
+
+      {:error, reason} ->
+        raise ArgumentError, "invalid keypair file: #{inspect(reason)}"
     end
   end
 
-  defp native_module, do: @default_native
+  # `ExLibp2p.Config` accessor (not `compile_env`). Pre-fix this was
+  # `Application.compile_env`, which baked the value at module-attribute
+  # time → integration tests that flip `:native_module` at runtime
+  # silently kept the compile-time Mock binding. Runtime read makes the
+  # test setup's `Application.put_env` actually take effect.
+  defp native_module, do: ExLibp2p.Config.default_native_module()
 end

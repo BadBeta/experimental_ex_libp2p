@@ -10,12 +10,22 @@ defmodule ExLibp2p.Native.Nif do
   @behaviour ExLibp2p.Native.Metrics
   @behaviour ExLibp2p.Native.Rendezvous
 
+  # Typed NIF error shape: {error_atom, human_readable_string}.
+  # Encoded by the Rust-side `NifError` Encoder impl. Pattern-match on the
+  # outer atom for branching; the string is for logs/exceptions.
+  @typedoc "Typed error returned by every fallible NIF function."
+  @type nif_error :: {atom(), String.t()}
+
   version = Mix.Project.config()[:version]
 
   use RustlerPrecompiled,
     otp_app: :ex_libp2p,
     crate: "ex_libp2p_nif",
     base_url: "https://github.com/badbeta/ex_libp2p/releases/download/v#{version}",
+    # RULE-EXCEPTION: archdo-3.2 — `force_build:` opt-in via env var is the
+    # documented RustlerPrecompiled pattern for forcing a local build when no
+    # precompiled binary is published. See
+    # https://hexdocs.pm/rustler_precompiled/precompilation_guide.html#forcing-a-local-build
     force_build: System.get_env("EX_LIBP2P_BUILD") in ["1", "true"],
     targets:
       Enum.uniq(
@@ -27,7 +37,12 @@ defmodule ExLibp2p.Native.Nif do
   # --- Core ---
 
   @impl ExLibp2p.Native.Core
-  @spec start_node(map()) :: {:ok, reference()} | {:error, term()}
+  # Real NIF returns a bare `reference()` on success and raises
+  # `ErlangError` on failure. `Node.init/1`'s `start_node_safe/2` rescues
+  # the raise and converts to `{:error, reason}` so the `with` chain in
+  # `init/1` can branch on either path. The `@spec` reflects the
+  # success-path shape; failures travel via raise, not return value.
+  @spec start_node(map()) :: reference()
   def start_node(_config), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.Core
@@ -51,70 +66,81 @@ defmodule ExLibp2p.Native.Nif do
   def listening_addrs(_handle), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.Core
-  @spec dial(reference(), String.t()) :: :ok | {:error, atom()}
+  @spec dial(reference(), String.t()) :: :ok | {:error, nif_error()}
   def dial(_handle, _addr), do: :erlang.nif_error(:nif_not_loaded)
 
   # --- Pubsub ---
 
   @impl ExLibp2p.Native.Pubsub
-  @spec publish(reference(), String.t(), binary()) :: :ok | {:error, atom()}
+  @spec publish(reference(), String.t(), binary()) :: :ok | {:error, nif_error()}
   def publish(_handle, _topic, _data), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.Pubsub
-  @spec subscribe(reference(), String.t()) :: :ok | {:error, atom()}
+  @spec subscribe(reference(), String.t()) :: :ok | {:error, nif_error()}
   def subscribe(_handle, _topic), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.Pubsub
-  @spec unsubscribe(reference(), String.t()) :: :ok | {:error, atom()}
+  @spec unsubscribe(reference(), String.t()) :: :ok | {:error, nif_error()}
   def unsubscribe(_handle, _topic), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.Pubsub
-  @spec gossipsub_mesh_peers(reference(), String.t()) :: {:ok, [String.t()]} | {:error, atom()}
+  @spec gossipsub_mesh_peers(reference(), String.t()) ::
+          {:ok, [String.t()]} | {:error, nif_error()}
   def gossipsub_mesh_peers(_handle, _topic), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.Pubsub
-  @spec gossipsub_all_peers(reference()) :: {:ok, [String.t()]} | {:error, atom()}
+  @spec gossipsub_all_peers(reference()) :: {:ok, [String.t()]} | {:error, nif_error()}
   def gossipsub_all_peers(_handle), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.Pubsub
-  @spec gossipsub_peer_score(reference(), String.t()) :: {:ok, float()} | {:error, atom()}
+  @spec gossipsub_peer_score(reference(), String.t()) ::
+          {:ok, float()} | {:error, nif_error()}
   def gossipsub_peer_score(_handle, _peer_id), do: :erlang.nif_error(:nif_not_loaded)
 
   # --- DHT ---
 
   @impl ExLibp2p.Native.DHT
-  @spec dht_put(reference(), binary(), binary()) :: :ok | {:error, atom()}
+  @spec dht_put(reference(), binary(), binary()) :: :ok | {:error, nif_error()}
   def dht_put(_handle, _key, _value), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.DHT
-  @spec dht_get(reference(), binary()) :: :ok | {:error, atom()}
+  @spec dht_get(reference(), binary()) :: :ok | {:error, nif_error()}
   def dht_get(_handle, _key), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.DHT
-  @spec dht_find_peer(reference(), String.t()) :: :ok | {:error, atom()}
+  @spec dht_find_peer(reference(), String.t()) :: :ok | {:error, nif_error()}
   def dht_find_peer(_handle, _peer_id), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.DHT
-  @spec dht_provide(reference(), binary()) :: :ok | {:error, atom()}
+  @spec dht_provide(reference(), binary()) :: :ok | {:error, nif_error()}
   def dht_provide(_handle, _key), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.DHT
-  @spec dht_find_providers(reference(), binary()) :: :ok | {:error, atom()}
+  @spec dht_find_providers(reference(), binary()) :: :ok | {:error, nif_error()}
   def dht_find_providers(_handle, _key), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.DHT
-  @spec dht_bootstrap(reference()) :: :ok | {:error, atom()}
+  @spec dht_bootstrap(reference()) :: :ok | {:error, nif_error()}
   def dht_bootstrap(_handle), do: :erlang.nif_error(:nif_not_loaded)
+
+  @impl ExLibp2p.Native.DHT
+  @spec kad_export_routing_table(reference()) :: {:ok, binary()} | {:error, nif_error()}
+  def kad_export_routing_table(_handle), do: :erlang.nif_error(:nif_not_loaded)
+
+  @impl ExLibp2p.Native.DHT
+  @spec kad_import_routing_table(reference(), binary()) ::
+          {:ok, non_neg_integer()} | {:error, nif_error()}
+  def kad_import_routing_table(_handle, _data), do: :erlang.nif_error(:nif_not_loaded)
 
   # --- RPC ---
 
   @impl ExLibp2p.Native.RPC
   @spec rpc_send_request(reference(), String.t(), binary()) ::
-          {:ok, String.t()} | {:error, atom()}
+          {:ok, String.t()} | {:error, nif_error()}
   def rpc_send_request(_handle, _peer_id, _data), do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.RPC
-  @spec rpc_send_response(reference(), String.t(), binary()) :: :ok | {:error, atom()}
+  @spec rpc_send_response(reference(), String.t(), binary()) :: :ok | {:error, nif_error()}
   def rpc_send_response(_handle, _channel_id, _data), do: :erlang.nif_error(:nif_not_loaded)
 
   # --- Keypair ---
@@ -124,37 +150,44 @@ defmodule ExLibp2p.Native.Nif do
   def generate_keypair, do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.Keypair
-  @spec keypair_from_protobuf(binary()) :: {:ok, binary(), String.t()} | {:error, atom()}
+  @spec keypair_from_protobuf(binary()) ::
+          {:ok, binary(), String.t()} | {:error, nif_error()}
   def keypair_from_protobuf(_bytes), do: :erlang.nif_error(:nif_not_loaded)
 
   # --- Relay ---
 
   @impl ExLibp2p.Native.Relay
-  @spec listen_via_relay(reference(), String.t()) :: :ok | {:error, atom()}
+  @spec listen_via_relay(reference(), String.t()) :: :ok | {:error, nif_error()}
   def listen_via_relay(_handle, _relay_addr), do: :erlang.nif_error(:nif_not_loaded)
 
   # --- Metrics ---
 
   @impl ExLibp2p.Native.Metrics
   @spec bandwidth_stats(reference()) ::
-          {:ok, non_neg_integer(), non_neg_integer()} | {:error, atom()}
+          {:ok, non_neg_integer(), non_neg_integer()} | {:error, nif_error()}
   def bandwidth_stats(_handle), do: :erlang.nif_error(:nif_not_loaded)
+
+  @impl ExLibp2p.Native.Metrics
+  @spec prometheus_metrics(reference()) :: {:ok, String.t()} | {:error, nif_error()}
+  def prometheus_metrics(_handle), do: :erlang.nif_error(:nif_not_loaded)
 
   # --- Rendezvous ---
 
   @impl ExLibp2p.Native.Rendezvous
   @spec rendezvous_register(reference(), String.t(), non_neg_integer(), String.t()) ::
-          :ok | {:error, atom()}
+          :ok | {:error, nif_error()}
   def rendezvous_register(_handle, _namespace, _ttl, _rendezvous_peer),
     do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.Rendezvous
-  @spec rendezvous_discover(reference(), String.t(), String.t()) :: :ok | {:error, atom()}
+  @spec rendezvous_discover(reference(), String.t(), String.t()) ::
+          :ok | {:error, nif_error()}
   def rendezvous_discover(_handle, _namespace, _rendezvous_peer),
     do: :erlang.nif_error(:nif_not_loaded)
 
   @impl ExLibp2p.Native.Rendezvous
-  @spec rendezvous_unregister(reference(), String.t(), String.t()) :: :ok | {:error, atom()}
+  @spec rendezvous_unregister(reference(), String.t(), String.t()) ::
+          :ok | {:error, nif_error()}
   def rendezvous_unregister(_handle, _namespace, _rendezvous_peer),
     do: :erlang.nif_error(:nif_not_loaded)
 end

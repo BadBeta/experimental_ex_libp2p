@@ -6,6 +6,6 @@ defmodule ExLibp2p.Native.RPC do
   @type handle :: reference()
 
   @callback rpc_send_request(handle(), String.t(), binary()) ::
-              {:ok, String.t()} | {:error, atom()}
-  @callback rpc_send_response(handle(), String.t(), binary()) :: :ok | {:error, atom()}
+              {:ok, String.t()} | {:error, term()}
+  @callback rpc_send_response(handle(), String.t(), binary()) :: :ok | {:error, term()}
 end

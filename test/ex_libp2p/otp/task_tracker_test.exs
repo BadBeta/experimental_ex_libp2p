@@ -164,4 +164,41 @@ defmodule ExLibp2p.OTP.TaskTrackerTest do
       assert {:error, :not_found} = TaskTracker.get(tracker, id2)
     end
   end
+
+  describe "catch-all callback safety" do
+    test "handle_call returns {:error, :unknown_call} for unknown messages", %{tracker: tracker} do
+      assert {:error, :unknown_call} = GenServer.call(tracker, :__deliberately_unknown__)
+      assert Process.alive?(tracker)
+    end
+  end
+
+  describe "format_status/1" do
+    test "summarizes tasks/subscribers to counts (not full maps/lists)" do
+      state = %TaskTracker{
+        tasks: %{
+          "t1" => %TaskTracker.Task{
+            id: "t1",
+            peer_id: @peer_a,
+            target: :w,
+            message: :m,
+            dispatched_at: 0
+          },
+          "t2" => %TaskTracker.Task{
+            id: "t2",
+            peer_id: @peer_b,
+            target: :w,
+            message: :m,
+            dispatched_at: 0
+          }
+        },
+        subscribers: [self(), self()],
+        counter: 2
+      }
+
+      formatted = TaskTracker.format_status(%{state: state, queue: []})
+      assert formatted.state.tasks == 2
+      assert formatted.state.subscribers == 2
+      assert formatted.state.counter == 2
+    end
+  end
 end
